@@ -1,6 +1,11 @@
 import Foundation
 import AppKit
 
+// Line-buffer stdout. When output is redirected it is otherwise block-buffered, so a crash
+// mid-run discards everything printed so far — which turns "it trapped somewhere" into
+// "it produced no output at all".
+setvbuf(stdout, nil, _IOLBF, 0)
+
 // Headless regression suite for Photo Culler's logic packages.
 //
 // Runs without XCTest (and therefore without a full Xcode install):
@@ -10,6 +15,17 @@ import AppKit
 // touches the user's files is.
 
 // `--bench` measures instead of asserting; see Benchmarks.swift.
+if CommandLine.arguments.contains("--bench-open") {
+    _ = NSApplication.shared
+    do {
+        try await OpenFolderBenchmark.run()
+        exit(0)
+    } catch {
+        print("benchmark failed: \(error)")
+        exit(1)
+    }
+}
+
 if CommandLine.arguments.contains("--bench") {
     do {
         try await Benchmarks.run()
