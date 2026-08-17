@@ -43,7 +43,11 @@ let package = Package(
                 "Decode",
                 "Sidecar",
                 "Rename",
-                "Ingest"
+                "Ingest",
+                // UI is included so WorkspaceViewModel can be driven headlessly. SwiftUI
+                // *views* still need a running app, but the state machine behind them —
+                // filtering, auto-advance, folder switching, metadata commits — does not.
+                "UI"
             ],
             path: "Tests/Harness"
         )

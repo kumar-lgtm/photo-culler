@@ -73,10 +73,23 @@ else
     rm -rf "${STAGING}"
 fi
 
-DMG_SIZE=$(du -h "${BUILD_DIR}/${DMG_NAME}" | cut -f1)
+# ── 5. Publish into dist/ (tracked in git) ──────────────────────────────────
+# dist/ is committed so anyone who clones or downloads the repo can install the app
+# without a Swift toolchain. build/ stays untracked scratch.
+DIST_DIR="dist"
+DIST_DMG="${DIST_DIR}/${APP_NAME}.dmg"
+mkdir -p "${DIST_DIR}"
+cp "${BUILD_DIR}/${DMG_NAME}" "${DIST_DMG}"
+
+VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "PhotoCuller/Info.plist" 2>/dev/null || echo "0.0.0")
+DMG_SIZE=$(du -h "${DIST_DMG}" | cut -f1)
+
 echo ""
-echo "==> Done! ${BUILD_DIR}/${DMG_NAME} (${DMG_SIZE})"
+echo "==> Done!"
+echo "    scratch:  ${BUILD_DIR}/${DMG_NAME}"
+echo "    shipped:  ${DIST_DMG}  (v${VERSION}, ${DMG_SIZE})"
+echo ""
+echo "Commit ${DIST_DMG} so people can install straight from the repo."
 echo ""
 echo "NOTE: This app is ad-hoc signed (no Apple Developer ID)."
-echo "Your friend will need to right-click > Open on first launch"
-echo "and click 'Open' on the Gatekeeper dialog."
+echo "First launch needs right-click > Open, then 'Open' on the Gatekeeper dialog."
