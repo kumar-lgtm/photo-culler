@@ -1,0 +1,31 @@
+# macOS
+.DS_Store
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Xcode
+xcuserdata/
+DerivedData/
+*.xcuserstate
+
+# Build artifacts / distribution (regenerate with ./scripts/package-dmg.sh)
+build/
+*.dmg
+*.app
+
+# Logs
+*.log
+
+# Dead scratch files: hardcoded absolute paths to local/client folders.
+# Delete these when convenient — they are not part of the build.
+/test_scan.swift
+/test_scanner.swift
+
+# Local agent tooling, not part of the app.
+# .agents/ vendors twostraws/SwiftUI-Agent-Skill (MIT) without its LICENSE file;
+# re-add it upstream-complete if you ever want it tracked here.
+.agents/
+.vscode/
