@@ -137,8 +137,20 @@ public actor ImageProvider {
         }
         // Offload decode to a detached task to avoid blocking the actor
         return await Task.detached(priority: .userInitiated) {
+            let diagStart = DispatchTime.now()
             guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
                 return nil
+            }
+            defer {
+                if Diag.isEnabled {
+                    let ms = Diag.elapsedMS(since: diagStart)
+                    let tierName = String(describing: tier)
+                    Task { await Diag.DecodeStats.shared.record(tier: tierName, ms: ms, pixels: 0) }
+                    // Anything this slow per image is what the user is feeling.
+                    if ms > 250 {
+                        Diag.log(String(format: "slow decode [%@] %.0f ms — %@", tierName, ms, url.lastPathComponent))
+                    }
+                }
             }
             
             switch tier {

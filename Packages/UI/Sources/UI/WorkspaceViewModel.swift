@@ -385,6 +385,8 @@ public class WorkspaceViewModel: ObservableObject {
 
         self.currentFolder = url
         self.isScanning = true
+        let diagStart = DispatchTime.now()
+        Diag.log("openFolder: \(url.path)")
 
         // A new folder means the old derived caches are meaningless — and they used to grow
         // without bound because only `metadataCache` was ever replaced.
@@ -393,7 +395,9 @@ public class WorkspaceViewModel: ObservableObject {
         self.metadataCache = [:]
 
         do {
+            let scanStart = DispatchTime.now()
             let loadedPhotos = try await scanner.scan(folderURL: url, recursive: true)
+            Diag.log(String(format: "  scan: %.0f ms, %d items", Diag.elapsedMS(since: scanStart), loadedPhotos.count))
             guard generation == folderGeneration else { return }
 
             self.allPhotos = loadedPhotos.sorted { $0.url.lastPathComponent < $1.url.lastPathComponent }
@@ -419,9 +423,13 @@ public class WorkspaceViewModel: ObservableObject {
             self.filterSettings.enabledFileExtensions = Set(self.availableFileExtensions)
 
             self.isScanning = false
+            let filterStart = DispatchTime.now()
             self.applyFilters()
+            Diag.log(String(format: "  filter+sort: %.0f ms, %d visible", Diag.elapsedMS(since: filterStart), self.photos.count))
             folderManager.addRecent(url: url)
             prefetch()
+            Diag.log(String(format: "openFolder returned after %.0f ms (decode continues in background)",
+                            Diag.elapsedMS(since: diagStart)))
 
             startMetadataLoad(for: loadedPhotos + self.pairedJPGItems, generation: generation)
 
