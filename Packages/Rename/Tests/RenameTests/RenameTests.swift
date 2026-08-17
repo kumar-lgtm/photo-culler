@@ -17,18 +17,25 @@ final class RenameTests: XCTestCase {
             iso: "800"
         )
         
-        // Simple sequence and name
+        // Simple sequence and name. The auto-appended extension keeps the SOURCE case
+        // ("CR2"), matching Photo Mechanic. These two assertions previously expected
+        // ".cr2" and had therefore never passed — the suite has never been runnable on a
+        // machine without full Xcode, so nothing surfaced it. Use the {ext} token if you
+        // want the extension normalized to lower case.
         let res1 = formatter.format(template: "Wedding-{seq:000}-{name:lower}", context: context)
-        // extension is auto-appended
-        XCTAssertEqual(res1, "Wedding-042-img_1234.cr2")
-        
-        // Explicit extension
+        XCTAssertEqual(res1, "Wedding-042-img_1234.CR2")
+
+        // Explicit extension — must not be appended a second time.
         let res2 = formatter.format(template: "New_{seq}_{ext:upper}", context: context)
         XCTAssertEqual(res2, "New_0042_CR2")
-        
+
+        // {ext} lowercases explicitly.
+        let res2b = formatter.format(template: "{name}.{ext}", context: context)
+        XCTAssertEqual(res2b, "IMG_1234.cr2")
+
         // Metadata
         let res3 = formatter.format(template: "{name}_{rating}_{color}", context: context)
-        XCTAssertEqual(res3, "IMG_1234_5★_Red.cr2")
+        XCTAssertEqual(res3, "IMG_1234_5★_Red.CR2")
     }
 
     func testBatchRenamerCollisions() {

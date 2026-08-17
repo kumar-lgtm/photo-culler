@@ -7,7 +7,10 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "PhotoCuller", targets: ["PhotoCuller"])
+        .executable(name: "PhotoCuller", targets: ["PhotoCuller"]),
+        // Headless regression suite — see Tests/Harness. Built as an executable rather than
+        // an XCTest bundle so it runs without a full Xcode install (`swift run pcqa`).
+        .executable(name: "pcqa", targets: ["pcqa"])
     ],
     dependencies: [
         .package(path: "Packages/Catalog"),
@@ -32,6 +35,17 @@ let package = Package(
             ],
             path: "PhotoCuller",
             exclude: ["Info.plist", "AppIcon.icns"]
+        ),
+        .executableTarget(
+            name: "pcqa",
+            dependencies: [
+                "Catalog",
+                "Decode",
+                "Sidecar",
+                "Rename",
+                "Ingest"
+            ],
+            path: "Tests/Harness"
         )
     ]
 )

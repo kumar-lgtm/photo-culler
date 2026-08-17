@@ -19,7 +19,7 @@ public struct ShellView: View {
     
     public var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            SidebarView(workspace: workspace)
+            SidebarView(workspace: workspace, folderManager: workspace.folderManager)
                 .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 300)
         } detail: {
             MainViewerView(workspace: workspace)
@@ -108,6 +108,20 @@ public struct ShellView: View {
         .tint(workspace.isBeigeMode ? Color(red: 0.65, green: 0.55, blue: 0.45) : nil)
         .preferredColorScheme(workspace.isBeigeMode ? .light : nil)
         .fontDesign(workspace.isBeigeMode ? .serif : .default)
+        .task {
+            workspace.restoreCodeReplacements()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+            // Queued sidecar writes must land before the process goes away. The app no
+            // longer advertises sudden termination, so this window actually exists.
+            let coordinator = workspace.writeCoordinator
+            let semaphore = DispatchSemaphore(value: 0)
+            Task.detached {
+                await coordinator.flush()
+                semaphore.signal()
+            }
+            _ = semaphore.wait(timeout: .now() + 5)
+        }
     }
     
     private func openFolderPanel() {

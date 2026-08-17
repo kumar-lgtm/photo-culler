@@ -3,40 +3,55 @@ import Catalog
 
 struct SidebarView: View {
     @ObservedObject var workspace: WorkspaceViewModel
+    /// Observed directly — `FolderManager` is now an `ObservableObject`, so opening a folder
+    /// actually redraws the Recents list instead of waiting for some unrelated republish.
+    @ObservedObject var folderManager: FolderManager
     @State private var searchText: String = ""
-    
+
+    private var filteredRecents: [BookmarkFolder] {
+        guard !searchText.isEmpty else { return folderManager.recents }
+        return folderManager.recents.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+    }
+
+    private var filteredFavorites: [BookmarkFolder] {
+        guard !searchText.isEmpty else { return folderManager.favorites }
+        return folderManager.favorites.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+    }
+
     var body: some View {
         List {
             Section(workspace.isBeigeMode ? "recent spaces" : "Recent Folders") {
-                if workspace.folderManager.recents.isEmpty {
-                    Text(workspace.isBeigeMode ? "no spaces yet..." : "No recent folders")
+                if filteredRecents.isEmpty {
+                    Text(emptyRecentsLabel)
                         .foregroundStyle(.secondary)
                         .font(.caption)
                 } else {
-                    ForEach(workspace.folderManager.recents, id: \.id) { recent in
+                    ForEach(filteredRecents, id: \.id) { recent in
                         Button(action: {
                             openBookmark(recent)
                         }) {
                             Label(workspace.isBeigeMode ? recent.name.lowercased() : recent.name, systemImage: "folder")
                         }
                         .buttonStyle(.plain)
+                        .help(recent.path)
                     }
                 }
             }
-            
+
             Section(workspace.isBeigeMode ? "curated favorites" : "Favorites") {
-                if workspace.folderManager.favorites.isEmpty {
-                    Text(workspace.isBeigeMode ? "waiting to be curated..." : "No favorites yet")
+                if filteredFavorites.isEmpty {
+                    Text(emptyFavoritesLabel)
                         .foregroundStyle(.secondary)
                         .font(.caption)
                 } else {
-                    ForEach(workspace.folderManager.favorites, id: \.id) { fav in
+                    ForEach(filteredFavorites, id: \.id) { fav in
                         Button(action: {
                             openBookmark(fav)
                         }) {
                             Label(workspace.isBeigeMode ? fav.name.lowercased() : fav.name, systemImage: "star")
                         }
                         .buttonStyle(.plain)
+                        .help(fav.path)
                     }
                 }
             }
@@ -75,7 +90,7 @@ struct SidebarView: View {
             }
 
             Section(workspace.isBeigeMode ? "vibes" : "Aesthetics") {
-                Toggle(isOn: workspace.$isBeigeMode) {
+                Toggle(isOn: $workspace.isBeigeMode) {
                     Label(workspace.isBeigeMode ? "minimalist luxe ✨" : "Minimalist Luxe (Beige)", systemImage: workspace.isBeigeMode ? "heart.fill" : "sparkles")
                         .font(.body)
                 }
@@ -85,12 +100,28 @@ struct SidebarView: View {
         }
         .scrollContentBackground(workspace.isBeigeMode ? .hidden : .visible)
         .background(workspace.isBeigeMode ? Color(red: 0.96, green: 0.94, blue: 0.91) : .clear)
-        .searchable(text: $searchText, placement: .sidebar)
+        .searchable(text: $searchText, placement: .sidebar, prompt: "Filter folders")
     }
-    
+
+    private var emptyRecentsLabel: String {
+        if !searchText.isEmpty { return "No folders match “\(searchText)”" }
+        return workspace.isBeigeMode ? "no spaces yet..." : "No recent folders"
+    }
+
+    private var emptyFavoritesLabel: String {
+        if !searchText.isEmpty { return "No favorites match “\(searchText)”" }
+        return workspace.isBeigeMode ? "waiting to be curated..." : "No favorites yet"
+    }
+
     private func openBookmark(_ folder: BookmarkFolder) {
+        let (url, isStale) = folder.resolve()
+        if isStale {
+            // Re-record the bookmark so it keeps resolving after the folder moves or the
+            // machine reboots, instead of silently degrading to a raw path.
+            folderManager.refreshBookmark(for: folder, resolvedURL: url)
+        }
         Task {
-            await workspace.openFolder(folder.url)
+            await workspace.openFolder(url)
         }
     }
 }

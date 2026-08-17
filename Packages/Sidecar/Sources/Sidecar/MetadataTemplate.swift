@@ -35,10 +35,17 @@ public final class TemplateManager: Sendable {
     private let storageURL: URL
     
     public init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = appSupport.appending(path: "PhotoCuller")
+        storageURL = Self.applicationSupportDirectory().appending(path: "metadata_templates.json")
+    }
+
+    /// Resolves `~/Library/Application Support/PhotoCuller`, falling back to a temp
+    /// directory rather than force-unwrapping a search-path lookup that can return empty.
+    static func applicationSupportDirectory() -> URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        let dir = base.appending(path: "PhotoCuller")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        storageURL = dir.appending(path: "metadata_templates.json")
+        return dir
     }
     
     public func loadTemplates() -> [MetadataTemplate] {

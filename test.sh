@@ -1,34 +1,45 @@
 #!/bin/bash
 
 # Photo Culler Test Runner
-# This script runs all automated tests for the Photo Culler project and its packages.
+#
+# Two layers:
+#   1. The headless regression suite (`swift run pcqa`) — always runs, no Xcode required.
+#      This is the primary gate and covers every module that touches the user's files.
+#   2. The per-package XCTest suites — only when a full Xcode is selected, because XCTest
+#      does not ship with the Command Line Tools.
+#
+# Previously this script exited immediately on a Command Line Tools setup, so the suite was
+# unrunnable on a machine that could still build and ship the app.
 
-set -e
+set -euo pipefail
 
-echo "Running Photo Culler Tests..."
+cd "$(dirname "$0")"
 
-# Check if XCTest is available by checking the xcode-select path
-XCODE_PATH=$(xcode-select -p)
-if [[ "$XCODE_PATH" == *"/CommandLineTools" ]]; then
-    echo "⚠️ Warning: xcode-select is pointing to CommandLineTools."
-    echo "XCTest is only available with a full Xcode installation."
-    echo "Please run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
-    echo "and try again."
-    exit 1
+echo "════════════════════════════════════════"
+echo "  Photo Culler — regression suite"
+echo "════════════════════════════════════════"
+swift run pcqa
+
+XCODE_PATH="$(xcode-select -p 2>/dev/null || echo "")"
+if [[ "$XCODE_PATH" == *"/CommandLineTools" || -z "$XCODE_PATH" ]]; then
+    echo ""
+    echo "ℹ️  Skipping XCTest package suites: xcode-select points at Command Line Tools."
+    echo "   XCTest needs a full Xcode install. To include them:"
+    echo "     sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
+    echo ""
+    echo "✅ Regression suite passed."
+    exit 0
 fi
 
-PACKAGES_DIR="Packages"
-
-# Find all packages with a Tests directory and run swift test
-for pkg in "$PACKAGES_DIR"/*; do
+for pkg in Packages/*; do
     if [ -d "$pkg/Tests" ]; then
-        echo "======================================"
-        echo "Testing $(basename "$pkg")..."
-        echo "======================================"
-        cd "$pkg"
-        swift test
-        cd ../..
+        echo ""
+        echo "════════════════════════════════════════"
+        echo "  XCTest: $(basename "$pkg")"
+        echo "════════════════════════════════════════"
+        ( cd "$pkg" && swift test )
     fi
 done
 
+echo ""
 echo "✅ All tests completed successfully!"

@@ -185,9 +185,10 @@ struct InspectorView: View {
         )
     }
 
+    /// Counts are computed once at scan time. This used to filter the entire catalog per
+    /// extension on every render — and the Inspector re-renders on every arrow key.
     private func fileExtensionCount(_ ext: String) -> Int {
-        let normalized = ext.lowercased()
-        return (workspace.allPhotos + workspace.pairedJPGItems).filter { $0.fileExtension == normalized }.count
+        workspace.count(forExtension: ext)
     }
     
     private func color(for label: ColorLabel) -> Color {
@@ -323,21 +324,25 @@ struct HistogramView: View {
             let width = 100
             let height = 100
             let colorSpace = CGColorSpaceCreateDeviceGray()
-            var rawData = [UInt8](repeating: 0, count: width * height)
-            
-            guard let context = CGContext(data: &rawData,
+
+            // Let CoreGraphics own the buffer. Passing `&rawData` let the pointer escape the
+            // inout scope — `context.draw` then ran against a pointer that was formally
+            // invalid. It usually worked, which is exactly what made it dangerous.
+            guard let context = CGContext(data: nil,
                                           width: width,
                                           height: height,
                                           bitsPerComponent: 8,
                                           bytesPerRow: width,
                                           space: colorSpace,
-                                          bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return [] }
-            
+                                          bitmapInfo: CGImageAlphaInfo.none.rawValue),
+                  let buffer = context.data else { return [] }
+
             context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
-            
+
+            let pixels = buffer.bindMemory(to: UInt8.self, capacity: width * height)
             var bins = [CGFloat](repeating: 0, count: 64)
-            for pixel in rawData {
-                let bin = Int(pixel) / 4
+            for index in 0..<(width * height) {
+                let bin = Int(pixels[index]) / 4
                 bins[min(bin, 63)] += 1.0
             }
             
