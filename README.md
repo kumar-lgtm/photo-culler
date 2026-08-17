@@ -4,6 +4,25 @@
 
 ---
 
+## 📦 Install
+
+Grab **[`dist/Photo Culler.dmg`](dist/)** from this repo (or the
+[latest release](https://github.com/kumar-lgtm/photo-culler/releases/latest)) — no toolchain
+needed. Open the DMG and drag **PhotoCuller** to Applications.
+
+> **First launch:** the app is ad-hoc signed (no Apple Developer ID), so Gatekeeper will
+> refuse a normal double-click. **Right-click the app → Open**, then click **Open** in the
+> dialog. macOS remembers the choice, so you only do this once.
+>
+> On macOS 15+ you may instead need **System Settings → Privacy & Security → Open Anyway**.
+
+Requires macOS 14 (Sonoma) or later, Apple Silicon or Intel.
+
+To rebuild the installer yourself: `./scripts/package-dmg.sh` — it writes `build/` (scratch)
+and refreshes the tracked `dist/Photo Culler.dmg`.
+
+---
+
 ## 🏛 Architecture Breakdown
 
 Photo Culler uses a modular multi-package Swift architecture. The top-level application shell (`PhotoCuller`) delegates core domain logic to seven specialized local Swift packages located under `Packages/`.

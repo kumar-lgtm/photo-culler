@@ -11,10 +11,14 @@ xcuserdata/
 DerivedData/
 *.xcuserstate
 
-# Build artifacts / distribution (regenerate with ./scripts/package-dmg.sh)
+# Build artifacts (regenerate with ./scripts/package-dmg.sh)
 build/
-*.dmg
 *.app
+*.dmg
+
+# ...except the shipped installer, which IS tracked so anyone with the repo can install
+# without a toolchain. Note this adds ~3 MB to git history per released build.
+!dist/*.dmg
 
 # Logs
 *.log

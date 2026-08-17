@@ -237,7 +237,7 @@ enum SidecarSuite {
         for i in 1...40 {
             metadata.rating = (i % 5) + 1
             metadata.label = [.red, .yellow, .green, .blue][i % 4]
-            await coordinator.submit(.init(metadata: metadata,
+            coordinator.submit(.init(metadata: metadata,
                                            sidecarURL: sidecarURL,
                                            imageURL: imageURL))
         }
@@ -261,8 +261,8 @@ enum SidecarSuite {
         // Concurrent writes to *different* files must still both land.
         let a = dir.appendingPathComponent("a.xmp")
         let b = dir.appendingPathComponent("b.xmp")
-        await coordinator.submit(.init(metadata: PhotoMetadata(rating: 1), sidecarURL: a, imageURL: imageURL))
-        await coordinator.submit(.init(metadata: PhotoMetadata(rating: 5), sidecarURL: b, imageURL: imageURL))
+        coordinator.submit(.init(metadata: PhotoMetadata(rating: 1), sidecarURL: a, imageURL: imageURL))
+        coordinator.submit(.init(metadata: PhotoMetadata(rating: 5), sidecarURL: b, imageURL: imageURL))
         await coordinator.flush()
         t.equal(try SidecarManager().read(from: a).rating, 1, "independent file A written")
         t.equal(try SidecarManager().read(from: b).rating, 5, "independent file B written")

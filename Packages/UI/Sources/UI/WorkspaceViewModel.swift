@@ -234,8 +234,7 @@ public class WorkspaceViewModel: ObservableObject {
             writeEmbedded: writeEmbedded,
             writeFinderTags: writeFinderTags
         )
-        let coordinator = writeCoordinator
-        Task { await coordinator.submit(job) }
+        writeCoordinator.submit(job)
 
         if filtersDependOnMetadata {
             applyFilters()
@@ -327,14 +326,12 @@ public class WorkspaceViewModel: ObservableObject {
             writeEmbedded: true,
             writeFinderTags: true
         )
-        let coordinator = writeCoordinator
-        Task { await coordinator.submit(job) }
+        writeCoordinator.submit(job)
     }
 
     /// Applies a stationery-pad template across the current selection.
     public func applyTemplate(_ template: MetadataTemplate) {
         let targets = photos.filter { selection.contains($0.id) && canWriteMetadata(to: $0) }
-        let coordinator = writeCoordinator
 
         for photo in targets {
             let sidecarURL = metadataSidecarURL(for: photo)
@@ -351,7 +348,7 @@ public class WorkspaceViewModel: ObservableObject {
                 writeEmbedded: true,
                 writeFinderTags: true
             )
-            Task { await coordinator.submit(job) }
+            writeCoordinator.submit(job)
         }
 
         showHUD(.message("Applied to \(targets.count)"))
