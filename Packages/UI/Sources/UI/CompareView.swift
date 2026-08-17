@@ -328,44 +328,53 @@ struct ComparePane: View {
 
         loadTask = Task {
             let ref = PhotoRef(id: photo.id, url: photo.url, pairedURL: photo.pairedURL)
-            
+
+            // Preview first for instant feedback.
             if let preview = await workspace.imageProvider.image(for: ref, tier: .preview) {
                 guard !Task.isCancelled else { return }
                 image = preview
-                
-                if workspace.faceDataCache[photo.id] == nil {
-                    let faces = await ImageAnalyzer.shared.detectFaces(in: preview)
-                    await MainActor.run {
-                        workspace.faceDataCache[photo.id] = faces
-                    }
-                }
-                if workspace.sharpnessCache[photo.id] == nil {
-                    let score = await ImageAnalyzer.shared.sharpness(of: preview)
-                    await MainActor.run {
-                        workspace.sharpnessCache[photo.id] = score
-                    }
-                }
+                imageLoadFinished = true
             }
 
             guard !Task.isCancelled else { return }
+
+            // Then escalate to native resolution. Compare mode exists to judge critical
+            // focus at 4× magnification — doing that against a 3200px preview means
+            // inspecting an upscaled image, which can't answer the question being asked.
+            guard let full = await workspace.imageProvider.image(for: ref, tier: .full) else {
+                imageLoadFinished = true
+                return
+            }
+            guard !Task.isCancelled else { return }
+            image = full
             imageLoadFinished = true
-        }
-    }
-    
-    private func colorForLabel(_ label: ColorLabel) -> Color {
-        switch label {
-        case .red: return .red
-        case .yellow: return .yellow
-        case .green: return .green
-        case .blue: return .blue
-        case .purple: return .purple
-        case .orange: return .orange
-        case .cyan: return .cyan
-        case .magenta: return .pink
-        case .none: return .clear
+
+            // Score sharpness from the full-resolution image, on the detected face when
+            // there is one — that's the region a photographer is actually judging.
+            if workspace.sharpnessCache[photo.id] == nil {
+                var faces = workspace.faceDataCache[photo.id]
+                if faces == nil {
+                    faces = await ImageAnalyzer.shared.detectFaces(in: full)
+                }
+                let resolved = faces ?? []
+                let region = resolved.first.map { expand($0.boundingBox, by: 1.4) }
+                let score = await ImageAnalyzer.shared.sharpness(of: full, region: region)
+                await MainActor.run {
+                    workspace.faceDataCache[photo.id] = resolved
+                    workspace.sharpnessCache[photo.id] = score
+                }
+            }
         }
     }
 
+    /// Pads a face box so the score includes eyes/hair edges, clamped to the frame.
+    private func expand(_ rect: CGRect, by factor: CGFloat) -> CGRect {
+        let dw = rect.width * (factor - 1) / 2
+        let dh = rect.height * (factor - 1) / 2
+        return rect.insetBy(dx: -dw, dy: -dh)
+            .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+    }
+    
     /// Compact rendering of the (arbitrary-scale) sharpness score; higher = sharper.
     private func sharpnessLabel(_ score: Double) -> String {
         if score >= 1000 { return String(format: "%.1fk", score / 1000) }

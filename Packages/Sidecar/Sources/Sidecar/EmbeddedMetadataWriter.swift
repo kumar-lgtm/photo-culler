@@ -142,39 +142,71 @@ public final class EmbeddedMetadataWriter: Sendable {
 
 extension EmbeddedMetadataWriter {
     
+    private static let userTagsAttribute = "com.apple.metadata:_kMDItemUserTags"
+
+    /// The Finder tag names this app manages. Only these are ever removed — anything else
+    /// on the file belongs to the user.
+    private static let managedTagNames: Set<String> = ["Red", "Orange", "Yellow", "Green", "Blue", "Purple"]
+
     /// Maps XMP color labels to macOS Finder tag colors and writes them
     /// as extended attributes so colors appear in Finder's tag column.
     ///
-    /// Uses the `com.apple.metadata:_kMDItemUserTags` extended attribute,
-    /// which is the low-level mechanism Finder uses for colored tags.
+    /// Merges into the file's existing tags rather than replacing them. The previous
+    /// implementation wrote a single-element array over the whole tag list, so a
+    /// photographer who organizes with their own Finder tags lost every one of them the
+    /// first time they pressed a color key.
     public func writeFinderTags(for metadata: PhotoMetadata, to imageURL: URL) throws {
         guard FileManager.default.fileExists(atPath: imageURL.path) else { return }
-        
-        let attrName = "com.apple.metadata:_kMDItemUserTags"
+
         let path = imageURL.path
-        
-        if metadata.label != .none {
-            guard let tagEntry = finderTagEntry(for: metadata.label) else { return }
-            
-            // Finder tags are stored as a binary plist array of strings
-            // Each entry is "TagName\nColorIndex" where ColorIndex is 0-7
-            let tags: [String] = [tagEntry]
-            let plistData = try PropertyListSerialization.data(
-                fromPropertyList: tags,
-                format: .binary,
-                options: 0
-            )
-            
-            let result = plistData.withUnsafeBytes { buffer in
-                setxattr(path, attrName, buffer.baseAddress, buffer.count, 0, 0)
-            }
-            if result != 0 {
-                throw SidecarError.writeFailed
-            }
-        } else {
-            // Remove tags
-            removexattr(path, attrName, 0)
+        var tags = readFinderTags(atPath: path)
+
+        // Drop only the color tags we own, preserving user tags and their order.
+        tags.removeAll { entry in
+            let name = entry.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? entry
+            return Self.managedTagNames.contains(name)
         }
+
+        if metadata.label != .none, let tagEntry = finderTagEntry(for: metadata.label) {
+            tags.append(tagEntry)
+        }
+
+        if tags.isEmpty {
+            removexattr(path, Self.userTagsAttribute, 0)
+            return
+        }
+
+        // Finder tags are a binary plist array of "TagName\nColorIndex" strings.
+        let plistData = try PropertyListSerialization.data(
+            fromPropertyList: tags,
+            format: .binary,
+            options: 0
+        )
+
+        let result = plistData.withUnsafeBytes { buffer -> Int32 in
+            guard let base = buffer.baseAddress else { return -1 }
+            return setxattr(path, Self.userTagsAttribute, base, buffer.count, 0, 0)
+        }
+        if result != 0 {
+            throw SidecarError.writeFailed
+        }
+    }
+
+    /// Reads the existing Finder tag array, or an empty array if the file has none.
+    public func readFinderTags(atPath path: String) -> [String] {
+        let size = getxattr(path, Self.userTagsAttribute, nil, 0, 0, 0)
+        guard size > 0 else { return [] }
+
+        var buffer = [UInt8](repeating: 0, count: size)
+        let read = buffer.withUnsafeMutableBytes { raw -> Int in
+            guard let base = raw.baseAddress else { return -1 }
+            return getxattr(path, Self.userTagsAttribute, base, size, 0, 0)
+        }
+        guard read > 0 else { return [] }
+
+        let data = Data(buffer.prefix(read))
+        let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)
+        return (plist as? [String]) ?? []
     }
     
     /// Returns a Finder tag entry string in the format "Name\nColorIndex".

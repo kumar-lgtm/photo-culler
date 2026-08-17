@@ -15,22 +15,50 @@ public final class ImageAnalyzer: Sendable {
     
     private init() {}
     
-    /// Relative sharpness score (variance of the Laplacian) computed on a downsampled grayscale
-    /// copy. Higher = more in-focus / more detail. The absolute number is arbitrary, so it's only
-    /// meaningful when comparing frames of the same scene (e.g. a burst in compare mode).
-    public func sharpness(of cgImage: CGImage) async -> Double {
+    /// Relative sharpness score (variance of the Laplacian), measured on a **native-resolution
+    /// crop** rather than a downsampled copy of the whole frame.
+    ///
+    /// Downsampling to 320px destroys exactly the high-frequency detail that separates a
+    /// tack-sharp frame from a slightly-missed-focus one, so the old score routinely picked
+    /// the wrong frame in a burst. Sampling a native-resolution region keeps that detail,
+    /// and capping the region keeps the cost bounded regardless of sensor size.
+    ///
+    /// Pass `region` (normalized, origin bottom-left, as Vision reports faces) to measure a
+    /// detected face instead of the centre — that's where focus actually matters.
+    ///
+    /// The absolute number is arbitrary; it's only meaningful when comparing frames of the
+    /// same scene at the same sampling settings.
+    public func sharpness(of cgImage: CGImage, region: CGRect? = nil) async -> Double {
         return await Task.detached(priority: .utility) {
-            // Downsample to a small grayscale buffer — fast and resolution-independent.
-            let maxDim = 320
-            let scale = min(1.0, Double(maxDim) / Double(max(cgImage.width, cgImage.height)))
-            let w = max(8, Int(Double(cgImage.width) * scale))
-            let h = max(8, Int(Double(cgImage.height) * scale))
+            let imageWidth = cgImage.width
+            let imageHeight = cgImage.height
+            guard imageWidth > 8, imageHeight > 8 else { return 0 }
+
+            // Choose the area to sample: a face if we have one, otherwise the central 50%.
+            let normalized = region ?? CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5)
+            // CGImage cropping uses a top-left origin; Vision boxes are bottom-left.
+            let cropRect = CGRect(
+                x: normalized.minX * CGFloat(imageWidth),
+                y: (1.0 - normalized.maxY) * CGFloat(imageHeight),
+                width: max(normalized.width * CGFloat(imageWidth), 8),
+                height: max(normalized.height * CGFloat(imageHeight), 8)
+            ).integral.intersection(CGRect(x: 0, y: 0, width: imageWidth, height: imageHeight))
+
+            guard !cropRect.isNull, cropRect.width >= 8, cropRect.height >= 8,
+                  let cropped = cgImage.cropping(to: cropRect) else { return 0 }
+
+            // Sample at native scale, capped so a 100MP file costs the same as a 24MP one.
+            let sampleCap = 768
+            let scale = min(1.0, Double(sampleCap) / Double(max(cropped.width, cropped.height)))
+            let w = max(8, Int(Double(cropped.width) * scale))
+            let h = max(8, Int(Double(cropped.height) * scale))
 
             let gray = CGColorSpaceCreateDeviceGray()
             guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8,
                                       bytesPerRow: w, space: gray,
                                       bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return 0 }
-            ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: w, height: h))
+            ctx.interpolationQuality = .none   // don't smooth away the detail we're measuring
+            ctx.draw(cropped, in: CGRect(x: 0, y: 0, width: w, height: h))
             guard let buf = ctx.data else { return 0 }
             let px = buf.bindMemory(to: UInt8.self, capacity: w * h)
 

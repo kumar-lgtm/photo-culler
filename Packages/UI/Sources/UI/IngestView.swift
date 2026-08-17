@@ -21,6 +21,7 @@ struct IngestView: View {
     @State private var progress: IngestProgress?
     @State private var result: IngestResult?
     @State private var errorMessage: String?
+    @State private var ingestTask: Task<Void, Never>?
     
     private let templateManager = TemplateManager()
     
@@ -52,13 +53,17 @@ struct IngestView: View {
                 .font(.headline)
             
             Spacer()
-            
-            if !isIngesting {
-                Button("Cancel") {
+
+            // A 128GB card import used to be unstoppable: the button was hidden while
+            // ingesting and the sheet could not be dismissed.
+            Button(isIngesting ? "Stop Ingest" : "Cancel") {
+                if isIngesting {
+                    ingestTask?.cancel()
+                } else {
                     dismiss()
                 }
-                .buttonStyle(.bordered)
             }
+            .buttonStyle(.bordered)
         }
         .padding()
     }
@@ -244,29 +249,40 @@ struct IngestView: View {
         VStack(spacing: 16) {
             Spacer()
             
-            Image(systemName: result.failedFiles.isEmpty ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+            let hadProblems = result.destinationReports.contains { !$0.failed.isEmpty } || result.wasCancelled
+
+            Image(systemName: hadProblems ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
                 .font(.system(size: 48))
-                .foregroundStyle(result.failedFiles.isEmpty ? .green : .orange)
-            
-            Text("Ingest Complete")
+                .foregroundStyle(hadProblems ? .orange : .green)
+
+            Text(result.wasCancelled ? "Ingest Stopped" : "Ingest Complete")
                 .font(.title2.weight(.semibold))
             
-            VStack(spacing: 4) {
-                Text("\(result.copiedFiles.count) files copied")
-                
-                if !result.skippedFiles.isEmpty {
-                    Text("\(result.skippedFiles.count) skipped (already exist)")
-                        .foregroundStyle(.secondary)
+            VStack(spacing: 6) {
+                // Per-destination, so an incomplete backup is visible instead of inferred
+                // from the primary's numbers.
+                ForEach(Array(result.destinationReports.enumerated()), id: \.offset) { index, report in
+                    HStack(spacing: 6) {
+                        Text(index == 0 ? "Primary" : "Backup")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text("\(report.copied.count) copied")
+                        if !report.skipped.isEmpty {
+                            Text("· \(report.skipped.count) already there")
+                                .foregroundStyle(.secondary)
+                        }
+                        if !report.failed.isEmpty {
+                            Text("· \(report.failed.count) failed")
+                                .foregroundStyle(.red)
+                        }
+                    }
+                    .font(.callout)
                 }
-                
-                if !result.failedFiles.isEmpty {
-                    Text("\(result.failedFiles.count) failed")
-                        .foregroundStyle(.red)
-                }
-                
+
                 Text("\(formatBytes(result.totalBytes)) in \(String(format: "%.1f", result.duration))s")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
+                    .padding(.top, 4)
             }
             
             Spacer()
@@ -302,18 +318,31 @@ struct IngestView: View {
         )
         
         let manager = IngestManager()
-        
-        Task {
+        // One shared box instead of a Task per file — 5,000 spawned tasks could also land
+        // out of order and make the progress bar jump backwards.
+        let relay = ProgressRelay()
+
+        ingestTask = Task {
+            let streamTask = Task { @MainActor in
+                for await update in relay.stream {
+                    self.progress = update
+                }
+            }
+            defer { streamTask.cancel() }
+
             do {
                 let ingestResult = try await manager.run(job: job) { p in
-                    Task { @MainActor in
-                        self.progress = p
-                    }
+                    relay.send(p)
                 }
-                
+                relay.finish()
                 self.result = ingestResult
                 self.isIngesting = false
+            } catch is CancellationError {
+                relay.finish()
+                self.errorMessage = "Ingest stopped. Files already copied were left in place."
+                self.isIngesting = false
             } catch {
+                relay.finish()
                 self.errorMessage = error.localizedDescription
                 self.isIngesting = false
             }
@@ -327,4 +356,23 @@ struct IngestView: View {
         formatter.countStyle = .file
         return formatter.string(fromByteCount: bytes)
     }
+}
+
+/// Funnels ingest progress into a single stream that keeps only the newest value.
+///
+/// The previous code spawned one `Task { @MainActor in ... }` per file, which for a few
+/// thousand files meant thousands of tasks whose completion order wasn't guaranteed — so
+/// the progress bar could jump backwards.
+final class ProgressRelay: @unchecked Sendable {
+    let stream: AsyncStream<IngestProgress>
+    private let continuation: AsyncStream<IngestProgress>.Continuation
+
+    init() {
+        var captured: AsyncStream<IngestProgress>.Continuation!
+        stream = AsyncStream(bufferingPolicy: .bufferingNewest(1)) { captured = $0 }
+        continuation = captured
+    }
+
+    func send(_ progress: IngestProgress) { continuation.yield(progress) }
+    func finish() { continuation.finish() }
 }

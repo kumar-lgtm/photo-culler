@@ -35,9 +35,32 @@ public actor ImageProvider {
     private var decodeTasks: [TaskKey: Task<CGImage?, Never>] = [:]
 
     public init() {
-        thumbnailCache.countLimit = 1000  // ~150 MB at 256 px RGBA
-        previewCache.countLimit = 12      // ~350 MB at 3200 px RGBA
-        fullCache.countLimit = 3          // native-res, heavy — kept tiny
+        // `countLimit` bounds the number of entries, not their size — so the old limits
+        // couldn't hold the documented memory ceiling. A 512px RGBA thumbnail is ~1 MB, so
+        // 1000 of them was ~1 GB, not the "~150 MB" the comment claimed. These are byte
+        // budgets via `totalCostLimit`, with the cost supplied per image on insert.
+        thumbnailCache.totalCostLimit = 192 * 1_048_576   // 192 MB
+        thumbnailCache.countLimit = 1500
+
+        previewCache.totalCostLimit = 256 * 1_048_576     // 256 MB
+        previewCache.countLimit = 16
+
+        fullCache.totalCostLimit = 320 * 1_048_576        // 320 MB
+        fullCache.countLimit = 3
+    }
+
+    /// Approximate resident size of a decoded bitmap, used as the NSCache cost.
+    private nonisolated func cost(of image: CGImage) -> Int {
+        let bytesPerRow = image.bytesPerRow > 0 ? image.bytesPerRow : image.width * 4
+        return max(1, bytesPerRow * image.height)
+    }
+
+    private func store(_ image: CGImage, forKey key: NSURL, tier: ImageTier) {
+        switch tier {
+        case .thumbnail: thumbnailCache.setObject(image, forKey: key, cost: cost(of: image))
+        case .preview:   previewCache.setObject(image, forKey: key, cost: cost(of: image))
+        case .full:      fullCache.setObject(image, forKey: key, cost: cost(of: image))
+        }
     }
     
     public func image(for photo: PhotoRef, tier: ImageTier) async -> CGImage? {
@@ -60,15 +83,8 @@ public actor ImageProvider {
         let task = Task {
             let targetURL = photo.pairedURL ?? photo.url
             let image = await decode(url: targetURL, tier: tier)
-            if let image = image {
-                switch tier {
-                case .thumbnail:
-                    self.thumbnailCache.setObject(image, forKey: nsURL)
-                case .preview:
-                    self.previewCache.setObject(image, forKey: nsURL)
-                case .full:
-                    self.fullCache.setObject(image, forKey: nsURL)
-                }
+            if let image {
+                self.store(image, forKey: nsURL, tier: tier)
             }
             // Remove task once done
             self.decodeTasks[key] = nil
@@ -92,12 +108,8 @@ public actor ImageProvider {
                 let task = Task {
                     let targetURL = photo.pairedURL ?? photo.url
                     let image = await decode(url: targetURL, tier: tier)
-                    if let image = image {
-                        if tier == .thumbnail {
-                            self.thumbnailCache.setObject(image, forKey: nsURL)
-                        } else if tier == .preview {
-                            self.previewCache.setObject(image, forKey: nsURL)
-                        }
+                    if let image, !Task.isCancelled {
+                        self.store(image, forKey: nsURL, tier: tier)
                     }
                     self.decodeTasks[key] = nil
                     return image

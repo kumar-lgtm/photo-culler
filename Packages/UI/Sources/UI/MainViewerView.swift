@@ -4,9 +4,24 @@ import Decode
 import Sidecar
 import AVKit
 
+/// Shared label → colour mapping (was duplicated in three views).
+func colorForLabel(_ label: ColorLabel) -> Color {
+    switch label {
+    case .red: return .red
+    case .yellow: return .yellow
+    case .green: return .green
+    case .blue: return .blue
+    case .purple: return .purple
+    case .orange: return .orange
+    case .cyan: return .cyan
+    case .magenta: return .pink
+    case .none: return .clear
+    }
+}
+
 struct MainViewerView: View {
     @ObservedObject var workspace: WorkspaceViewModel
-    
+
     var body: some View {
         VStack(spacing: 0) {
             // Main Content Area
@@ -16,51 +31,15 @@ struct MainViewerView: View {
                 } else {
                     Color(NSColor.underPageBackgroundColor)
                 }
-                
-                if workspace.photos.isEmpty {
-                    VStack(spacing: 24) {
-                        Image(systemName: workspace.isBeigeMode ? "sparkles" : "photo.on.rectangle.angled")
-                            .font(.system(size: 80))
-                            .foregroundStyle(workspace.isBeigeMode ? AnyShapeStyle(Color(red: 0.8, green: 0.7, blue: 0.6)) : AnyShapeStyle(.tertiary))
-                        
-                        VStack(spacing: 8) {
-                            Text(workspace.isBeigeMode ? "welcome to photo culler ✨" : "Welcome to Photo Culler")
-                                .font(workspace.isBeigeMode ? .custom("Times", size: 36).italic() : .largeTitle)
-                                .fontWeight(.bold)
-                            Text(workspace.isBeigeMode ? "mindful, slow, intentional photo selection." : "Fast, focused photo culling and selection.")
-                                .font(workspace.isBeigeMode ? .title3.italic() : .title3)
-                                .foregroundStyle(workspace.isBeigeMode ? Color(red: 0.5, green: 0.45, blue: 0.4) : .secondary)
-                        }
-                        
-                        Button {
-                            workspace.shortcutManager.actionPublisher.send(.openFolder)
-                        } label: {
-                            Label(workspace.isBeigeMode ? "open a folder..." : "Open Folder...", systemImage: workspace.isBeigeMode ? "heart.fill" : "folder.badge.plus")
-                                .font(.headline)
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 8)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
-                        
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text(workspace.isBeigeMode ? "mindful tips:" : "Quick Tips:")
-                                .font(.headline)
-                                .foregroundStyle(workspace.isBeigeMode ? Color(red: 0.5, green: 0.45, blue: 0.4) : .secondary)
-                                .padding(.top, 16)
-                            
-                            ShortcutRow(key: "← / →", action: workspace.isBeigeMode ? "breathe & navigate" : "Navigate photos")
-                            ShortcutRow(key: "1-5", action: workspace.isBeigeMode ? "curate rating" : "Rate photo")
-                            ShortcutRow(key: "⇧C", action: workspace.isBeigeMode ? "add to moodboard" : "Add to selection & advance")
-                            ShortcutRow(key: "C", action: workspace.isBeigeMode ? "compare aesthetics" : "Compare selected")
-                            ShortcutRow(key: "Esc", action: workspace.isBeigeMode ? "let go (clear)" : "Clear selection")
-                        }
-                        .padding(24)
-                        .background(workspace.isBeigeMode ? AnyShapeStyle(Color.white.opacity(0.4)) : AnyShapeStyle(.regularMaterial))
-                        .clipShape(RoundedRectangle(cornerRadius: workspace.isBeigeMode ? 24 : 12, style: .continuous))
-                        .shadow(color: workspace.isBeigeMode ? Color(red: 0.6, green: 0.5, blue: 0.4).opacity(0.15) : .black.opacity(0.1), radius: 15, y: 8)
+
+                if workspace.isScanning && workspace.photos.isEmpty {
+                    VStack(spacing: 14) {
+                        ProgressView()
+                        Text(workspace.isBeigeMode ? "gathering your images..." : "Scanning folder…")
+                            .foregroundStyle(.secondary)
                     }
-                    .padding()
+                } else if workspace.photos.isEmpty {
+                    emptyState
                 } else {
                     switch workspace.viewMode {
                     case .loupe:
@@ -74,14 +53,60 @@ struct MainViewerView: View {
                     }
                 }
             }
-            
+
             Divider()
-            
+
             // Filmstrip (always visible)
             FilmstripView(workspace: workspace)
                 .frame(height: 120)
                 .background(workspace.isBeigeMode ? Color(red: 0.94, green: 0.92, blue: 0.88) : Color(NSColor.windowBackgroundColor))
         }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 24) {
+            Image(systemName: workspace.isBeigeMode ? "sparkles" : "photo.on.rectangle.angled")
+                .font(.system(size: 80))
+                .foregroundStyle(workspace.isBeigeMode ? AnyShapeStyle(Color(red: 0.8, green: 0.7, blue: 0.6)) : AnyShapeStyle(.tertiary))
+
+            VStack(spacing: 8) {
+                Text(workspace.isBeigeMode ? "welcome to photo culler ✨" : "Welcome to Photo Culler")
+                    .font(workspace.isBeigeMode ? .custom("Times", size: 36).italic() : .largeTitle)
+                    .fontWeight(.bold)
+                Text(workspace.isBeigeMode ? "mindful, slow, intentional photo selection." : "Fast, focused photo culling and selection.")
+                    .font(workspace.isBeigeMode ? .title3.italic() : .title3)
+                    .foregroundStyle(workspace.isBeigeMode ? Color(red: 0.5, green: 0.45, blue: 0.4) : .secondary)
+            }
+
+            Button {
+                workspace.shortcutManager.actionPublisher.send(.openFolder)
+            } label: {
+                Label(workspace.isBeigeMode ? "open a folder..." : "Open Folder...", systemImage: workspace.isBeigeMode ? "heart.fill" : "folder.badge.plus")
+                    .font(.headline)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text(workspace.isBeigeMode ? "mindful tips:" : "Quick Tips:")
+                    .font(.headline)
+                    .foregroundStyle(workspace.isBeigeMode ? Color(red: 0.5, green: 0.45, blue: 0.4) : .secondary)
+                    .padding(.top, 16)
+
+                ShortcutRow(key: "← / →", action: workspace.isBeigeMode ? "breathe & navigate" : "Navigate photos")
+                ShortcutRow(key: "1-5", action: workspace.isBeigeMode ? "curate rating" : "Rate photo")
+                ShortcutRow(key: "⇧C", action: workspace.isBeigeMode ? "add to moodboard" : "Add to selection & advance")
+                ShortcutRow(key: "C", action: workspace.isBeigeMode ? "compare aesthetics" : "Compare selected")
+                ShortcutRow(key: "Esc", action: workspace.isBeigeMode ? "let go (clear)" : "Clear selection")
+            }
+            .padding(24)
+            .background(workspace.isBeigeMode ? AnyShapeStyle(Color.white.opacity(0.4)) : AnyShapeStyle(.regularMaterial))
+            .clipShape(RoundedRectangle(cornerRadius: workspace.isBeigeMode ? 24 : 12, style: .continuous))
+            .shadow(color: workspace.isBeigeMode ? Color(red: 0.6, green: 0.5, blue: 0.4).opacity(0.15) : .black.opacity(0.1), radius: 15, y: 8)
+        }
+        .padding()
     }
 }
 
@@ -96,7 +121,7 @@ struct LoupeView: View {
     @State private var faceZoomIndex: Int = 0
     @State private var faceZoomActive: Bool = false
     @State private var videoPlayer: AVPlayer?
-    
+
     var body: some View {
         GeometryReader { proxy in
             ZStack {
@@ -151,7 +176,7 @@ struct LoupeView: View {
                             loadFullQualityIfNeeded()
                         }
                     }
-                    .onEnded { value in
+                    .onEnded { _ in
                         zoomState.lastScale = zoomState.scale
                     }
             )
@@ -163,7 +188,7 @@ struct LoupeView: View {
                             height: zoomState.lastOffset.height + value.translation.height
                         )
                     }
-                    .onEnded { value in
+                    .onEnded { _ in
                         zoomState.lastOffset = zoomState.offset
                     }
             )
@@ -176,10 +201,10 @@ struct LoupeView: View {
                         let targetScale: CGFloat = 3.0
                         let viewCX = proxy.size.width / 2.0
                         let viewCY = proxy.size.height / 2.0
-                        
+
                         let offsetX = (1.0 - targetScale) * (location.x - viewCX)
                         let offsetY = (1.0 - targetScale) * (location.y - viewCY)
-                        
+
                         zoomState.scale = targetScale
                         zoomState.lastScale = targetScale
                         zoomState.offset = CGSize(width: offsetX, height: offsetY)
@@ -188,13 +213,15 @@ struct LoupeView: View {
                     }
                 }
             }
-            .onChange(of: workspace.currentPhotoIndex) { oldValue, newValue in
+            // Keyed on identity, not index: re-sorting or filtering can put a *different*
+            // photo at the same index, which used to leave the previous image on screen.
+            .onChange(of: workspace.currentPhoto?.id) { _, _ in
                 zoomState.reset()
                 faceZoomActive = false
-                loadImage()
+                loadImage(viewSize: proxy.size)
             }
             .task {
-                loadImage()
+                loadImage(viewSize: proxy.size)
             }
             .onDisappear {
                 loadTask?.cancel()
@@ -224,7 +251,7 @@ struct LoupeView: View {
         .border(Color.secondary.opacity(0.3), width: 1)
         .padding()
     }
-    
+
     private func pan(dx: CGFloat, dy: CGFloat) {
         guard zoomState.scale > 1.0 else { return }
         withAnimation(.easeOut(duration: 0.15)) {
@@ -245,8 +272,9 @@ struct LoupeView: View {
             } else {
                 let iw = CGFloat(cgImage.width)
                 let ih = CGFloat(cgImage.height)
+                guard iw > 0, ih > 0 else { return }
                 let fitScale = min(proxy.size.width / iw, proxy.size.height / ih)
-                // At fit the bitmap renders at iw*fitScale points wide; 1:1 needs scale = 1/fitScale.
+                guard fitScale > 0 else { return }
                 let targetScale = max(1.0, 1.0 / fitScale)
                 zoomState.scale = targetScale
                 zoomState.lastScale = targetScale
@@ -256,7 +284,7 @@ struct LoupeView: View {
             }
         }
     }
-    
+
     private func toggleFaceZoom(proxy: GeometryProxy) {
         guard let photo = workspace.currentPhoto,
               let cgImage = currentImage else { return }
@@ -266,8 +294,9 @@ struct LoupeView: View {
         if let faces = workspace.faceDataCache[photo.id] {
             applyFaceZoom(faces: faces, cgImage: cgImage, proxy: proxy)
         } else {
-            // Failsafe: Z pressed before async face detection finished. Detect on demand
-            // and then zoom, instead of silently doing nothing.
+            // Face detection now runs only when Z is actually pressed. Running it eagerly on
+            // a 3200px preview for every photo you landed on cost 100–300ms of CPU per
+            // navigation and starved the decode pipeline while arrowing through a shoot.
             let targetID = photo.id
             Task {
                 let faces = await ImageAnalyzer.shared.detectFaces(in: cgImage)
@@ -297,9 +326,6 @@ struct LoupeView: View {
                 return
             }
 
-            // Session-based, not scale-based: a fresh press always starts on the largest face
-            // (faces are sorted largest-first), regardless of any prior manual zoom. Subsequent
-            // presses cycle through the rest, then reset.
             if faceZoomActive {
                 faceZoomIndex += 1
                 if faceZoomIndex >= faces.count {
@@ -315,20 +341,16 @@ struct LoupeView: View {
 
             let faceRect = faces[faceZoomIndex].boundingBox
 
-            // proxy.size is the actual image rendering area (padding is outside GeometryReader)
             let iw = CGFloat(cgImage.width)
             let ih = CGFloat(cgImage.height)
+            guard iw > 0, ih > 0 else { return }
             let fitScale = min(proxy.size.width / iw, proxy.size.height / ih)
             let rw = iw * fitScale
             let rh = ih * fitScale
 
-            // Adaptive zoom: scale so the face fills ~55% of the viewport height regardless of how
-            // large it is in the frame. Clamped so we never barely-zoom or over-magnify.
             let renderedFaceHeight = max(faceRect.height * rh, 1)
             let targetScale = min(max((0.55 * proxy.size.height) / renderedFaceHeight, 1.8), 8.0)
 
-            // Center on face: after scaleEffect(s) + offset(o), point p ends at p*s + o.
-            // For face at center: o = -s * p  (Vision boundingBox is bottom-left origin → flip y).
             let offsetX = -targetScale * (faceRect.midX - 0.5) * rw
             let offsetY = -targetScale * (0.5 - faceRect.midY) * rh
 
@@ -338,12 +360,11 @@ struct LoupeView: View {
             zoomState.lastOffset = zoomState.offset
         }
     }
-    
-    private func loadImage() {
-        // Cancel any in-flight load to prevent stacking on large RAW files
+
+    private func loadImage(viewSize: CGSize) {
         loadTask?.cancel()
         fullQualityTask?.cancel()
-        
+
         guard let photo = workspace.currentPhoto else {
             currentImage = nil
             imageLoadFinished = false
@@ -371,44 +392,31 @@ struct LoupeView: View {
                workspace.currentPhoto?.id == photo.id {
                 currentImage = thumb
             }
-            
+
             guard !Task.isCancelled else { return }
 
-            // Load preview (3200px — sharp enough for most screens)
             if let preview = await workspace.imageProvider.image(for: ref, tier: .preview),
                workspace.currentPhoto?.id == photo.id {
                 currentImage = preview
-                
-                if workspace.faceDataCache[photo.id] == nil {
-                    let faces = await ImageAnalyzer.shared.detectFaces(in: preview)
-                    await MainActor.run {
-                        workspace.faceDataCache[photo.id] = faces
-                    }
-                }
-                if workspace.sharpnessCache[photo.id] == nil {
-                    let score = await ImageAnalyzer.shared.sharpness(of: preview)
-                    await MainActor.run {
-                        workspace.sharpnessCache[photo.id] = score
-                    }
-                }
-            }
-            
-            guard !Task.isCancelled else { return }
 
-            // JPEG/HEIC-style files are cheap enough to finish at native resolution while browsing.
-            if !photo.isRAW,
-               let full = await workspace.imageProvider.image(for: ref, tier: .full),
-               workspace.currentPhoto?.id == photo.id {
-                currentImage = full
-                fullQualityLoaded = true
+                // Only escalate to native resolution when the preview would actually be
+                // upscaled on this display. Decoding full-res for every non-RAW photo while
+                // browsing cost ~200MB per 50MP JPEG on every navigation.
+                let scale = NSScreen.main?.backingScaleFactor ?? 2.0
+                let neededPixels = max(viewSize.width, viewSize.height) * scale
+                if CGFloat(max(preview.width, preview.height)) < neededPixels {
+                    loadFullQualityIfNeeded()
+                }
             }
+
+            guard !Task.isCancelled else { return }
 
             if workspace.currentPhoto?.id == photo.id {
                 imageLoadFinished = true
             }
         }
     }
-    
+
     private func loadFullQualityIfNeeded() {
         guard fullQualityTask == nil,
               !fullQualityLoaded,
@@ -419,13 +427,16 @@ struct LoupeView: View {
             let ref = PhotoRef(id: photo.id, url: photo.url, pairedURL: photo.pairedURL)
             let full = await workspace.imageProvider.image(for: ref, tier: .full)
 
+            // Always clear the slot, so a failed or superseded decode doesn't permanently
+            // block later attempts to escalate quality.
+            defer { fullQualityTask = nil }
+
             guard !Task.isCancelled,
                   workspace.currentPhoto?.id == photo.id,
                   let full else { return }
 
             currentImage = full
             fullQualityLoaded = true
-            fullQualityTask = nil
         }
     }
 }
@@ -433,12 +444,12 @@ struct LoupeView: View {
 struct GridView: View {
     @ObservedObject var workspace: WorkspaceViewModel
     let width: CGFloat
-    
+
     var body: some View {
         ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: workspace.gridScale, maximum: workspace.gridScale * 1.5))], spacing: 16) {
                 ForEach(workspace.photos, id: \.id) { photo in
-                    ThumbnailView(photo: photo, workspace: workspace)
+                    thumbnail(for: photo)
                         .onTapGesture {
                             handleSelection(for: photo)
                         }
@@ -446,128 +457,134 @@ struct GridView: View {
             }
             .padding()
         }
-        .onChange(of: width) { old, new in updateColumns(new) }
-        .onChange(of: workspace.gridScale) { old, new in updateColumns(width) }
+        .onChange(of: width) { _, new in updateColumns(new) }
+        .onChange(of: workspace.gridScale) { _, _ in updateColumns(width) }
         .onAppear { updateColumns(width) }
     }
-    
+
+    /// Values are passed as plain `let`s so each tile only re-renders when *its own* state
+    /// changes. Handing every tile the whole view model meant one arrow key invalidated
+    /// every visible thumbnail in the grid and the filmstrip at once.
+    private func thumbnail(for photo: PhotoItem) -> some View {
+        ThumbnailView(
+            photo: photo,
+            metadata: workspace.metadataCache[photo.id],
+            isSelected: workspace.selection.contains(photo.id),
+            isFocused: workspace.currentPhoto?.id == photo.id,
+            selectionCount: workspace.selection.count,
+            // The slider drove column width only, so thumbnails stayed 100pt tall no matter
+            // where you put it.
+            height: workspace.gridScale * 0.72,
+            imageProvider: workspace.imageProvider,
+            onOpenPreview: { workspace.openInPreview(photo) },
+            onRevealInFinder: { workspace.revealInFinder(photo) }
+        )
+    }
+
     private func updateColumns(_ w: CGFloat) {
         let cols = max(1, Int((w + 16) / (workspace.gridScale + 16)))
         if workspace.gridColumnsCount != cols {
-            // Dispatch async to avoid modifying state during view update
             Task { @MainActor in
                 workspace.gridColumnsCount = cols
             }
         }
     }
-    
+
     private func handleSelection(for photo: PhotoItem) {
-        let isCommandDown = NSEvent.modifierFlags.contains(.command)
-        let isShiftDown = NSEvent.modifierFlags.contains(.shift)
-        
-        if isCommandDown {
-            if workspace.selection.contains(photo.id) {
-                workspace.selection.remove(photo.id)
-            } else {
-                workspace.selection.insert(photo.id)
-            }
-        } else if isShiftDown, let currentIdx = workspace.currentPhotoIndex, let targetIdx = workspace.photos.firstIndex(of: photo) {
-            let minIdx = min(currentIdx, targetIdx)
-            let maxIdx = max(currentIdx, targetIdx)
-            workspace.selection = Set(workspace.photos[minIdx...maxIdx].map { $0.id })
-        } else if workspace.viewMode == .compare {
-            // In compare mode, plain click just changes focus
-        } else {
-            workspace.isCollectingSelection = false
-            workspace.selection = [photo.id]
-        }
-        
-        if let idx = workspace.photos.firstIndex(of: photo) {
-            workspace.currentPhotoIndex = idx
-        }
+        applyThumbnailSelection(photo: photo, workspace: workspace)
     }
 }
 
 struct FilmstripView: View {
     @ObservedObject var workspace: WorkspaceViewModel
-    
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal) {
                 LazyHStack(spacing: 8) {
                     ForEach(workspace.photos, id: \.id) { photo in
-                        ThumbnailView(photo: photo, workspace: workspace)
-                            .id(photo.id)
-                            .onTapGesture {
-                                handleSelection(for: photo)
-                            }
+                        ThumbnailView(
+                            photo: photo,
+                            metadata: workspace.metadataCache[photo.id],
+                            isSelected: workspace.selection.contains(photo.id),
+                            isFocused: workspace.currentPhoto?.id == photo.id,
+                            selectionCount: workspace.selection.count,
+                            height: 100,
+                            imageProvider: workspace.imageProvider,
+                            onOpenPreview: { workspace.openInPreview(photo) },
+                            onRevealInFinder: { workspace.revealInFinder(photo) }
+                        )
+                        .id(photo.id)
+                        .onTapGesture {
+                            applyThumbnailSelection(photo: photo, workspace: workspace)
+                        }
                     }
                 }
                 .padding(.horizontal)
             }
             .scrollIndicators(.hidden)
             .onChange(of: workspace.currentPhotoIndex) { _, newValue in
-                guard let idx = newValue, idx < workspace.photos.count else { return }
+                guard let idx = newValue, idx >= 0, idx < workspace.photos.count else { return }
                 withAnimation {
                     proxy.scrollTo(workspace.photos[idx].id, anchor: .center)
                 }
             }
         }
     }
-    
-    private func handleSelection(for photo: PhotoItem) {
-        let isCommandDown = NSEvent.modifierFlags.contains(.command)
-        let isShiftDown = NSEvent.modifierFlags.contains(.shift)
-        
-        if isCommandDown {
-            if workspace.selection.contains(photo.id) {
-                workspace.selection.remove(photo.id)
-            } else {
-                workspace.selection.insert(photo.id)
-            }
-        } else if isShiftDown, let currentIdx = workspace.currentPhotoIndex, let targetIdx = workspace.photos.firstIndex(of: photo) {
-            let minIdx = min(currentIdx, targetIdx)
-            let maxIdx = max(currentIdx, targetIdx)
-            workspace.selection = Set(workspace.photos[minIdx...maxIdx].map { $0.id })
-        } else if workspace.viewMode == .compare {
-            // In compare mode, plain click just changes focus
+}
+
+/// Shared click behaviour for grid and filmstrip tiles (was duplicated verbatim).
+@MainActor
+func applyThumbnailSelection(photo: PhotoItem, workspace: WorkspaceViewModel) {
+    let isCommandDown = NSEvent.modifierFlags.contains(.command)
+    let isShiftDown = NSEvent.modifierFlags.contains(.shift)
+
+    if isCommandDown {
+        if workspace.selection.contains(photo.id) {
+            workspace.selection.remove(photo.id)
         } else {
-            workspace.isCollectingSelection = false
-            workspace.selection = [photo.id]
+            workspace.selection.insert(photo.id)
         }
-        
-        if let idx = workspace.photos.firstIndex(of: photo) {
-            workspace.currentPhotoIndex = idx
-        }
+    } else if isShiftDown, let currentIdx = workspace.currentPhotoIndex,
+              let targetIdx = workspace.photos.firstIndex(of: photo) {
+        let minIdx = min(currentIdx, targetIdx)
+        let maxIdx = max(currentIdx, targetIdx)
+        workspace.selection = Set(workspace.photos[minIdx...maxIdx].map { $0.id })
+    } else if workspace.viewMode == .compare {
+        // In compare mode, plain click just changes focus
+    } else {
+        workspace.isCollectingSelection = false
+        workspace.selection = [photo.id]
+    }
+
+    if let idx = workspace.photos.firstIndex(of: photo) {
+        workspace.currentPhotoIndex = idx
     }
 }
 
 struct ThumbnailView: View {
     let photo: PhotoItem
-    @ObservedObject var workspace: WorkspaceViewModel
+    let metadata: PhotoMetadata?
+    let isSelected: Bool
+    let isFocused: Bool
+    let selectionCount: Int
+    let height: CGFloat
+    let imageProvider: ImageProvider
+    let onOpenPreview: () -> Void
+    let onRevealInFinder: () -> Void
+
     @State private var image: CGImage?
     @State private var imageLoadFinished: Bool = false
-    
-    var isSelected: Bool {
-        workspace.selection.contains(photo.id)
-    }
-    
-    var isFocused: Bool {
-        if let currentIdx = workspace.currentPhotoIndex, currentIdx < workspace.photos.count {
-            return workspace.photos[currentIdx].id == photo.id
-        }
-        return false
-    }
-    
+
     private var fileExtBadge: (label: String, color: Color) {
         let ext = photo.url.pathExtension.lowercased()
-        
+
         if rawExtensions.contains(ext) {
             return (ext.uppercased(), .orange)
         } else if jpegExtensions.contains(ext) {
             return ("JPG", .green)
-        } else if ext == "heic" {
-            return ("HEIC", .teal)
+        } else if ext == "heic" || ext == "heif" {
+            return (ext.uppercased(), .teal)
         } else if ext == "png" {
             return ("PNG", .blue)
         } else if videoExtensions.contains(ext) {
@@ -576,18 +593,12 @@ struct ThumbnailView: View {
             return (ext.uppercased(), .gray)
         }
     }
-    
-    /// Visual states (clear hierarchy):
-    ///  - Active (currently viewing): bold double-stroke frame + lift + glow — "you are here"
-    ///  - Selected (in a multi-photo set / compare batch): accent ring + checkmark badge, kept bright
-    ///  - Neither: dimmed back
-    ///
-    /// `isMultiSelected` means a real selection set — not the lone auto-selection that follows
-    /// the cursor while browsing one photo at a time.
+
+    /// A real selection set — not the lone auto-selection that follows the cursor.
     private var isMultiSelected: Bool {
-        isSelected && workspace.selection.count > 1
+        isSelected && selectionCount > 1
     }
-    
+
     var body: some View {
         ZStack(alignment: .topLeading) {
             if let cgImage = image {
@@ -622,13 +633,10 @@ struct ThumbnailView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
 
-            // Dim back only photos that are neither active nor part of the selection set, so the
-            // active + selected photos clearly stand out.
             if !isFocused && !isSelected {
                 Color.black.opacity(0.5)
             }
 
-            // File type badge (top-left)
             let badge = fileExtBadge
             Text(badge.label)
                 .font(.system(size: 9, weight: .bold, design: .rounded))
@@ -638,8 +646,6 @@ struct ThumbnailView: View {
                 .background(badge.color.opacity(0.85), in: .rect(cornerRadius: 3))
                 .padding(4)
 
-            // Selection checkmark (top-right) — every photo in a multi-photo selection set
-            // (the compare batch), not just while actively collecting.
             if isMultiSelected {
                 VStack {
                     HStack {
@@ -653,16 +659,13 @@ struct ThumbnailView: View {
                     Spacer()
                 }
             }
-            
-            // Metadata overlays: color dot (top-right) + star rating (bottom-right)
-            let meta = workspace.metadataCache[photo.id]
-            
-            if let meta, meta.label != .none {
+
+            if let metadata, metadata.label != .none {
                 VStack {
                     HStack {
                         Spacer()
                         Circle()
-                            .fill(colorForLabel(meta.label))
+                            .fill(colorForLabel(metadata.label))
                             .frame(width: 10, height: 10)
                             .shadow(color: .black.opacity(0.5), radius: 2)
                             .padding(.top, isMultiSelected ? 26 : 4)
@@ -671,8 +674,8 @@ struct ThumbnailView: View {
                     Spacer()
                 }
             }
-            
-            if let meta, meta.rating > 0 {
+
+            if let metadata, metadata.rating > 0 {
                 VStack {
                     Spacer()
                     HStack {
@@ -681,7 +684,7 @@ struct ThumbnailView: View {
                             Image(systemName: "star.fill")
                                 .font(.system(size: 7))
                                 .foregroundStyle(.yellow)
-                            Text("\(meta.rating)")
+                            Text("\(metadata.rating)")
                                 .font(.system(size: 9, weight: .bold, design: .rounded))
                                 .foregroundStyle(.white)
                         }
@@ -693,14 +696,13 @@ struct ThumbnailView: View {
                 }
             }
 
-            // Pick / reject flag (bottom-left)
-            if let meta, meta.flag != .none {
+            if let metadata, metadata.flag != .none {
                 VStack {
                     Spacer()
                     HStack {
-                        Image(systemName: meta.flag == .pick ? "flag.fill" : "flag.slash.fill")
+                        Image(systemName: metadata.flag == .pick ? "flag.fill" : "flag.slash.fill")
                             .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.white, meta.flag == .pick ? Color.green : Color.red)
+                            .foregroundStyle(.white, metadata.flag == .pick ? Color.green : Color.red)
                             .padding(3)
                             .background(.black.opacity(0.6), in: .rect(cornerRadius: 3))
                             .padding(3)
@@ -708,16 +710,12 @@ struct ThumbnailView: View {
                     }
                 }
             }
-            
-            // Selection ring: solid accent border on every selected (non-active) photo in the set.
+
             if isSelected && !isFocused {
                 RoundedRectangle(cornerRadius: 4)
                     .stroke(Color.accentColor, lineWidth: 3)
             }
 
-            // Active (currently viewing): the boldest, unmistakable marker — a double-stroke frame
-            // (white hairline inside a thick accent border) that reads distinctly from a plain
-            // selection ring even among similar photos.
             if isFocused {
                 RoundedRectangle(cornerRadius: 4)
                     .stroke(Color.accentColor, lineWidth: 4)
@@ -727,7 +725,7 @@ struct ThumbnailView: View {
             }
         }
         .clipShape(.rect(cornerRadius: 4))
-        .opacity(workspace.metadataCache[photo.id]?.flag == .reject ? 0.4 : 1.0)
+        .opacity(metadata?.flag == .reject ? 0.4 : 1.0)
         .shadow(
             color: isFocused ? Color.accentColor.opacity(0.75) : .clear,
             radius: isFocused ? 11 : 0
@@ -736,33 +734,16 @@ struct ThumbnailView: View {
         .animation(.easeInOut(duration: 0.15), value: isFocused)
         .animation(.easeInOut(duration: 0.15), value: isSelected)
         .zIndex(isFocused ? 3 : (isSelected ? 2 : 0))
-        .frame(height: 100)
+        .frame(height: height)
         .contextMenu {
-            Button("Open in Preview") {
-                workspace.openInPreview(photo)
-            }
-            Button("Reveal in Finder") {
-                workspace.revealInFinder(photo)
-            }
+            Button("Open in Preview", action: onOpenPreview)
+            Button("Reveal in Finder", action: onRevealInFinder)
         }
-        .task {
+        .task(id: photo.id) {
+            imageLoadFinished = false
             let ref = PhotoRef(id: photo.id, url: photo.url, pairedURL: photo.pairedURL)
-            image = await workspace.imageProvider.image(for: ref, tier: .thumbnail)
+            image = await imageProvider.image(for: ref, tier: .thumbnail)
             imageLoadFinished = true
-        }
-    }
-    
-    private func colorForLabel(_ label: ColorLabel) -> Color {
-        switch label {
-        case .red: return .red
-        case .yellow: return .yellow
-        case .green: return .green
-        case .blue: return .blue
-        case .purple: return .purple
-        case .orange: return .orange
-        case .cyan: return .cyan
-        case .magenta: return .pink
-        case .none: return .clear
         }
     }
 }

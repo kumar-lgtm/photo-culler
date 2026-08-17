@@ -9,8 +9,6 @@ struct MetadataEditorView: View {
     @State private var selectedTemplate: MetadataTemplate?
     @State private var isEditingTemplate = false
     @State private var editingTemplate = MetadataTemplate()
-    @State private var codeReplacementManager: CodeReplacementManager?
-    @State private var codeReplacementCount: Int = 0
     @Environment(\.dismiss) private var dismiss
     
     private let templateManager = TemplateManager()
@@ -95,10 +93,11 @@ struct MetadataEditorView: View {
                         
                         Spacer()
                         
-                        if codeReplacementCount > 0 {
-                            Text("\(codeReplacementCount) codes")
+                        if workspace.codeReplacementCount > 0 {
+                            Text("\(workspace.codeReplacementCount) codes")
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
+                                .help(workspace.codeReplacementSourceURL?.lastPathComponent ?? "")
                         }
                         
                         Button("Load Codes", systemImage: "text.badge.plus") {
@@ -130,22 +129,20 @@ struct MetadataEditorView: View {
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(3...)
                     .onChange(of: text.wrappedValue) { _, newValue in
-                        if expandCodes, let manager = codeReplacementManager {
-                            let expanded = manager.expand(newValue)
-                            if expanded != newValue {
-                                text.wrappedValue = expanded
-                            }
+                        guard expandCodes else { return }
+                        let expanded = workspace.expandCodes(in: newValue)
+                        if expanded != newValue {
+                            text.wrappedValue = expanded
                         }
                     }
             } else {
                 TextField(label, text: text)
                     .textFieldStyle(.roundedBorder)
                     .onChange(of: text.wrappedValue) { _, newValue in
-                        if expandCodes, let manager = codeReplacementManager {
-                            let expanded = manager.expand(newValue)
-                            if expanded != newValue {
-                                text.wrappedValue = expanded
-                            }
+                        guard expandCodes else { return }
+                        let expanded = workspace.expandCodes(in: newValue)
+                        if expanded != newValue {
+                            text.wrappedValue = expanded
                         }
                     }
             }
@@ -293,44 +290,14 @@ struct MetadataEditorView: View {
     // MARK: - Actions
     
     private func saveCurrentMetadata() {
-        guard let photo = workspace.currentPhoto else { return }
-        guard workspace.canWriteMetadata(to: photo) else { return }
-        let sidecarURL = workspace.metadataSidecarURL(for: photo)
-        let metadata = workspace.currentMetadata
-        workspace.cacheMetadata(metadata, for: photo)
-        
-        let sidecar = workspace.sidecarManager
-        Task.detached {
-            do {
-                try sidecar.write(metadata, to: sidecarURL)
-            } catch {
-                print("Failed to write sidecar \(sidecarURL.path): \(error)")
-            }
-        }
+        // Routes through the write coordinator, and now also embeds IPTC + Finder tags —
+        // captions, creator and copyright previously reached the sidecar only, even though
+        // those are exactly the fields the embedded writer supports.
+        workspace.commitCurrentMetadata()
     }
-    
+
     private func applyTemplate(_ template: MetadataTemplate) {
-        let selectedPhotos = workspace.photos.filter { workspace.selection.contains($0.id) && workspace.canWriteMetadata(to: $0) }
-        let sidecar = workspace.sidecarManager
-        
-        for photo in selectedPhotos {
-            let sidecarURL = workspace.metadataSidecarURL(for: photo)
-            var metadata = workspace.metadataCache[photo.id] ?? (try? sidecar.read(from: sidecarURL)) ?? PhotoMetadata()
-            metadata = template.apply(to: metadata)
-            workspace.cacheMetadata(metadata, for: photo)
-            
-            if photo.id == workspace.currentPhoto?.id {
-                workspace.currentMetadata = metadata
-            }
-            
-            Task.detached {
-                do {
-                    try sidecar.write(metadata, to: sidecarURL)
-                } catch {
-                    print("Failed to write sidecar \(sidecarURL.path): \(error)")
-                }
-            }
-        }
+        workspace.applyTemplate(template)
     }
     
     private func saveTemplate() {
@@ -356,8 +323,9 @@ struct MetadataEditorView: View {
         
         if panel.runModal() == .OK, let url = panel.url {
             do {
-                codeReplacementManager = try CodeReplacementManager.load(from: url)
-                codeReplacementCount = codeReplacementManager?.count ?? 0
+                // Stored on the view model, not this sheet's @State — closing the editor
+                // used to discard the loaded roster every single time.
+                try workspace.loadCodeReplacements(from: url)
             } catch {
                 print("Failed to load code replacements: \(error)")
             }

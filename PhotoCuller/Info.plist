@@ -7,7 +7,7 @@
 	<key>CFBundleExecutable</key>
 	<string>PhotoCuller</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.braveenkumar.photculler</string>
+	<string>com.braveenkumar.photoculler</string>
 	<key>CFBundleName</key>
 	<string>Photo Culler</string>
 	<key>CFBundleDisplayName</key>
@@ -26,7 +26,18 @@
 	<true/>
 	<key>NSSupportsAutomaticTermination</key>
 	<true/>
+	<!--
+	  Deliberately NOT declaring NSSupportsSuddenTermination.
+	  The app performs background sidecar writes and full-file embedded-metadata rewrites;
+	  sudden termination lets macOS SIGKILL the process without running any cleanup, which
+	  can leave an orphaned .tmp beside the original or kill a replace mid-flight.
+	  MetadataWriteCoordinator.flush() runs on willTerminate instead.
+	-->
 	<key>NSSupportsSuddenTermination</key>
-	<true/>
+	<false/>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.photography</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>© Braveen Kumar</string>
 </dict>
 </plist>
