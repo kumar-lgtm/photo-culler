@@ -188,15 +188,17 @@ enum WorkspaceSuite {
 
         let vm = makeViewModel()
         // Open A and immediately switch to B, without waiting for A's metadata pass.
-        async let openA: Void = vm.openFolder(folderA)
-        _ = await openA
+        let openA = Task { @MainActor in await vm.openFolder(folderA) }
+        await Task.yield()
         await vm.openFolder(folderB)
+        await openA.value
 
         // Give any stale task from A every chance to land on B.
         try? await Task.sleep(for: .milliseconds(400))
 
         t.equal(vm.currentFolder, folderB, "current folder is B")
         t.equal(vm.photos.count, 2, "showing B's two photos, not A's six")
+        t.check(!vm.isScanning, "folder switch settles instead of leaving the loading spinner active")
 
         // The clobber bug: A's ratings appearing against B's photos.
         let ratedInB = vm.photos.filter { (vm.metadataCache[$0.id]?.rating ?? 0) > 0 }

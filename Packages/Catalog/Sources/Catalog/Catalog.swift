@@ -60,6 +60,10 @@ public let jpegExtensions: Set<String> = ["jpg", "jpeg"]
 public let otherImageExtensions: Set<String> = ["heic", "heif", "png", "tif", "tiff"]
 public let videoExtensions: Set<String> = ["mov", "mp4", "m4v", "avi", "mts", "mxf"]
 public let sidecarExtensions: Set<String> = ["aae", "cos", "dop", "pp3", "xmp"]
+public let supportedMediaExtensions: Set<String> = rawExtensions
+    .union(jpegExtensions)
+    .union(otherImageExtensions)
+    .union(videoExtensions)
 
 /// Extensions that can act as the primary half of a RAW+JPEG pair.
 ///
@@ -94,8 +98,8 @@ public final class CatalogScanner: Sendable {
             var groupedFiles: [URL: [FileInfo]] = [:]
 
             let options: FileManager.DirectoryEnumerationOptions = recursive ?
-                [.skipsHiddenFiles] :
-                [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
+                [.skipsHiddenFiles, .skipsPackageDescendants] :
+                [.skipsHiddenFiles, .skipsSubdirectoryDescendants, .skipsPackageDescendants]
 
             guard let enumerator = fileManager.enumerator(
                 at: folderURL,
@@ -119,7 +123,11 @@ public final class CatalogScanner: Sendable {
                 }
 
                 let ext = fileURL.pathExtension.lowercased()
-                guard !ext.isEmpty else { continue }
+                // The catalog is a media index, not a generic file browser. Returning every
+                // extension made project folders appear to contain CSS, PDFs and temp files,
+                // then sent those files into ImageIO where their thumbnails stayed on a
+                // spinner. Sidecars are discovered from each media item's stem later.
+                guard supportedMediaExtensions.contains(ext) else { continue }
 
                 guard let resources = try? fileURL.resourceValues(
                     forKeys: [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey]

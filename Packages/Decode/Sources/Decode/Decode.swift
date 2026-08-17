@@ -3,7 +3,7 @@ import CoreGraphics
 import ImageIO
 import AVFoundation
 
-public enum ImageTier: Sendable {
+public enum ImageTier: Hashable, Sendable {
     case thumbnail  // 256px
     case preview    // 2048px
     case full       // Native
@@ -33,6 +33,10 @@ public actor ImageProvider {
     }
     
     private var decodeTasks: [TaskKey: Task<CGImage?, Never>] = [:]
+    /// One deliberately serial prefetch lane per tier. The old implementation launched up
+    /// to 46 user-initiated ImageIO decodes at once whenever a folder opened. With large RAW
+    /// files that saturated CPU and memory before the on-screen photo could finish.
+    private var prefetchTasks: [ImageTier: Task<Void, Never>] = [:]
 
     public init() {
         // `countLimit` bounds the number of entries, not their size — so the old limits
@@ -83,7 +87,7 @@ public actor ImageProvider {
         let task = Task {
             let targetURL = photo.pairedURL ?? photo.url
             let image = await decode(url: targetURL, tier: tier)
-            if let image {
+            if let image, !Task.isCancelled {
                 self.store(image, forKey: nsURL, tier: tier)
             }
             // Remove task once done
@@ -96,27 +100,27 @@ public actor ImageProvider {
     }
     
     public func prefetch(photos: [PhotoRef], tier: ImageTier) {
-        for photo in photos {
-            let nsURL = photo.url as NSURL
-            
-            // Check if already cached
-            if tier == .thumbnail, thumbnailCache.object(forKey: nsURL) != nil { continue }
-            if tier == .preview, previewCache.object(forKey: nsURL) != nil { continue }
-            
-            let key = TaskKey(url: photo.url, tier: tier)
-            if decodeTasks[key] == nil {
-                let task = Task {
-                    let targetURL = photo.pairedURL ?? photo.url
-                    let image = await decode(url: targetURL, tier: tier)
-                    if let image, !Task.isCancelled {
-                        self.store(image, forKey: nsURL, tier: tier)
-                    }
-                    self.decodeTasks[key] = nil
-                    return image
-                }
-                decodeTasks[key] = task
+        prefetchTasks[tier]?.cancel()
+
+        // `photos` arrives in nearest-first order. Decode serially so foreground requests
+        // can run immediately instead of competing with dozens of speculative decodes.
+        let task = Task(priority: .utility) { [weak self] in
+            guard let self else { return }
+            for photo in photos {
+                guard !Task.isCancelled else { return }
+                _ = await self.image(for: photo, tier: tier)
             }
         }
+        prefetchTasks[tier] = task
+    }
+
+    /// Stops speculative work from the previous folder before a new folder starts loading.
+    /// Active synchronous ImageIO calls may finish, but cancellation prevents them from
+    /// populating caches and, with serial prefetch lanes, there are at most two of them.
+    public func cancelOutstandingWork() {
+        for task in prefetchTasks.values { task.cancel() }
+        prefetchTasks.removeAll()
+        for task in decodeTasks.values { task.cancel() }
     }
     
     public func cancelPrefetch(for photos: [PhotoRef]) {

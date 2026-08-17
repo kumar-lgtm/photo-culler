@@ -13,6 +13,9 @@ enum CatalogSuite {
         t.suite("Catalog — classification and sidecar detection")
         classification(t)
 
+        t.suite("Catalog — indexes media only")
+        try await mediaOnly(t)
+
         t.suite("Catalog — scan cancellation (4.7)")
         try await cancellation(t)
     }
@@ -74,6 +77,19 @@ enum CatalogSuite {
         t.check(sidecar.isSidecar, "xmp is a sidecar (so it can be filtered from the catalog)")
         t.check(heic.isOtherImage, "HEIC classified as an image")
         t.check(!sidecar.isRAW, "xmp is not RAW")
+    }
+
+    private static func mediaOnly(_ t: TestRunner) async throws {
+        let dir = try makeFolder(["keep.JPG", "notes.txt", "styles.css", "metadata.xmp"])
+        defer { TempDir.cleanup(dir) }
+
+        let package = dir.appendingPathComponent("Generated.app", isDirectory: true)
+        try FileManager.default.createDirectory(at: package, withIntermediateDirectories: true)
+        try Data("hidden".utf8).write(to: package.appendingPathComponent("inside.jpg"))
+
+        let items = try await CatalogScanner().scan(folderURL: dir, recursive: true)
+        t.equal(items.map(\.url.lastPathComponent), ["keep.JPG"],
+                "non-media, sidecars and package descendants never enter the photo catalog")
     }
 
     private static func cancellation(_ t: TestRunner) async throws {

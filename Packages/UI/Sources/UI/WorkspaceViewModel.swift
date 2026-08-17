@@ -95,7 +95,7 @@ public class WorkspaceViewModel: ObservableObject {
     public let renamer = BatchRenamer()
 
     private var cancellables = Set<AnyCancellable>()
-    private var scanTask: Task<Void, Never>?
+    private var scanTask: Task<[PhotoItem], Error>?
     private var metadataLoadTask: Task<Void, Never>?
     /// Guards against a slow scan of a previous folder landing on the current one.
     private var folderGeneration: UInt64 = 0
@@ -379,6 +379,10 @@ public class WorkspaceViewModel: ObservableObject {
         metadataLoadTask?.cancel()
         folderGeneration &+= 1
         let generation = folderGeneration
+        await imageProvider.cancelOutstandingWork()
+        // `await` makes this MainActor method re-entrant. If another folder open started
+        // while decode cancellation was crossing actors, only that newest request proceeds.
+        guard generation == folderGeneration else { return }
 
         activeScopedFolder?.stopAccessingSecurityScopedResource()
         activeScopedFolder = url.startAccessingSecurityScopedResource() ? url : nil
@@ -393,12 +397,27 @@ public class WorkspaceViewModel: ObservableObject {
         self.faceDataCache = [:]
         self.sharpnessCache = [:]
         self.metadataCache = [:]
+        self.allPhotos = []
+        self.photos = []
+        self.selection = []
+        self.currentPhotoIndex = nil
+        self.currentMetadata = PhotoMetadata()
+        self.pairedJPGItems = []
+        self.pairedJPGItemsByRawID = [:]
+        self.availableFileExtensions = []
+        self.extensionCounts = [:]
 
         do {
             let scanStart = DispatchTime.now()
-            let loadedPhotos = try await scanner.scan(folderURL: url, recursive: true)
+            // Own the task we claim to cancel. Previously `scanTask` was never assigned, so
+            // opening a second folder left the first recursive scan running indefinitely.
+            let scanner = self.scanner
+            let task = Task { try await scanner.scan(folderURL: url, recursive: true) }
+            scanTask = task
+            let loadedPhotos = try await task.value
             Diag.log(String(format: "  scan: %.0f ms, %d items", Diag.elapsedMS(since: scanStart), loadedPhotos.count))
             guard generation == folderGeneration else { return }
+            scanTask = nil
 
             self.allPhotos = loadedPhotos.sorted { $0.url.lastPathComponent < $1.url.lastPathComponent }
 
@@ -434,9 +453,14 @@ public class WorkspaceViewModel: ObservableObject {
             startMetadataLoad(for: loadedPhotos + self.pairedJPGItems, generation: generation)
 
         } catch is CancellationError {
-            // Superseded by a newer folder — nothing to report.
+            // A newer open owns the loading state. If the caller itself cancelled this open,
+            // make sure the UI does not remain on an endless spinner.
+            guard generation == folderGeneration else { return }
+            scanTask = nil
+            self.isScanning = false
         } catch {
             guard generation == folderGeneration else { return }
+            scanTask = nil
             self.isScanning = false
             showHUD(.message("Error: \(error.localizedDescription)"))
         }
@@ -740,11 +764,15 @@ public class WorkspaceViewModel: ObservableObject {
 
         let startThumb = max(0, index - 20)
         let endThumb = min(photos.count, index + 20)
-        let thumbRefs = photos[startThumb..<endThumb].map { PhotoRef(id: $0.id, url: $0.url, pairedURL: $0.pairedURL) }
+        let thumbRefs = (startThumb..<endThumb)
+            .sorted { abs($0 - index) < abs($1 - index) }
+            .map { PhotoRef(id: photos[$0].id, url: photos[$0].url, pairedURL: photos[$0].pairedURL) }
 
         let startPrev = max(0, index - 3)
         let endPrev = min(photos.count, index + 3)
-        let prevRefs = photos[startPrev..<endPrev].map { PhotoRef(id: $0.id, url: $0.url, pairedURL: $0.pairedURL) }
+        let prevRefs = (startPrev..<endPrev)
+            .sorted { abs($0 - index) < abs($1 - index) }
+            .map { PhotoRef(id: photos[$0].id, url: photos[$0].url, pairedURL: photos[$0].pairedURL) }
 
         Task {
             await imageProvider.prefetch(photos: thumbRefs, tier: .thumbnail)
