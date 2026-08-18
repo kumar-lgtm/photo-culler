@@ -317,7 +317,8 @@ struct HistogramView: View {
     }
     
     private func computeHistogram() async {
-        let ref = PhotoRef(id: photo.id, url: photo.url, pairedURL: photo.pairedURL)
+        let ref = PhotoRef(id: photo.id, url: photo.url, pairedURL: photo.pairedURL,
+                           prefersEmbeddedPreview: photo.isRAW && photo.pairedURL == nil)
         guard let cgImage = await workspace.imageProvider.image(for: ref, tier: .thumbnail) else { return }
         
         let data = await Task.detached(priority: .background) { () -> [CGFloat] in

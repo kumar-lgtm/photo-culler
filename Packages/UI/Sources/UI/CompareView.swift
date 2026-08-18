@@ -327,7 +327,8 @@ struct ComparePane: View {
         faceZoomActive = false   // new photo in this pane → fresh face-zoom session
 
         loadTask = Task {
-            let ref = PhotoRef(id: photo.id, url: photo.url, pairedURL: photo.pairedURL)
+            let ref = PhotoRef(id: photo.id, url: photo.url, pairedURL: photo.pairedURL,
+                               prefersEmbeddedPreview: photo.isRAW && photo.pairedURL == nil)
 
             // Preview first for instant feedback.
             if let preview = await workspace.imageProvider.image(for: ref, tier: .preview) {

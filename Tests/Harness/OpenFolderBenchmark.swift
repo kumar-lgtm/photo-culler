@@ -81,7 +81,8 @@ enum OpenFolderBenchmark {
         let firstThumbStart = DispatchTime.now()
         var decoded = 0
         for photo in vm.photos.prefix(30) {
-            let ref = PhotoRef(id: photo.id, url: photo.url, pairedURL: photo.pairedURL)
+            let ref = PhotoRef(id: photo.id, url: photo.url, pairedURL: photo.pairedURL,
+                               prefersEmbeddedPreview: photo.isRAW && photo.pairedURL == nil)
             if await vm.imageProvider.image(for: ref, tier: .thumbnail) != nil { decoded += 1 }
         }
         let firstThumbTime = ms(since: firstThumbStart)

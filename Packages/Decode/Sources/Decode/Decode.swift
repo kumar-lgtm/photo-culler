@@ -3,9 +3,49 @@ import CoreGraphics
 import ImageIO
 import AVFoundation
 
+/// Bounds blocking ImageIO work independently of how many SwiftUI cells become visible.
+/// ImageIO decoding is synchronous; launching one detached task per cell can otherwise
+/// occupy the cooperative thread pool and hundreds of megabytes of RAW working memory.
+private actor DecodeGate {
+    private var permits: Int
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var waiterHead = 0
+
+    init(maxConcurrent: Int) {
+        self.permits = max(1, maxConcurrent)
+    }
+
+    func acquire() async {
+        if permits > 0 {
+            permits -= 1
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func release() {
+        if waiterHead < waiters.count {
+            let continuation = waiters[waiterHead]
+            waiterHead += 1
+            // Periodically compact without paying Array.removeFirst() for every decode.
+            if waiterHead >= 64, waiterHead * 2 >= waiters.count {
+                waiters.removeFirst(waiterHead)
+                waiterHead = 0
+            }
+            continuation.resume()
+        } else {
+            waiters.removeAll(keepingCapacity: true)
+            waiterHead = 0
+            permits += 1
+        }
+    }
+}
+
 public enum ImageTier: Hashable, Sendable {
-    case thumbnail  // 256px
-    case preview    // 2048px
+    case thumbnail  // 512px
+    case preview    // 3200px
     case full       // Native
 }
 
@@ -13,15 +53,25 @@ public struct PhotoRef: Equatable, Hashable, Sendable {
     public let id: UUID
     public let url: URL
     public let pairedURL: URL?
+    /// RAW files normally contain a camera-generated JPEG that is dramatically cheaper to
+    /// extract than rasterizing the sensor data. Catalog/UI code opts into that path only
+    /// for an unpaired RAW; a paired JPEG remains the preferred source when one exists.
+    public let prefersEmbeddedPreview: Bool
     
-    public init(id: UUID = UUID(), url: URL, pairedURL: URL? = nil) {
+    public init(id: UUID = UUID(), url: URL, pairedURL: URL? = nil,
+                prefersEmbeddedPreview: Bool = false) {
         self.id = id
         self.url = url
         self.pairedURL = pairedURL
+        self.prefersEmbeddedPreview = prefersEmbeddedPreview
     }
 }
 
 public actor ImageProvider {
+
+    /// Three lanes leave room for a loupe preview plus visible filmstrip thumbnails while
+    /// preventing a SwiftUI task storm from asking ImageIO to rasterize every RAW at once.
+    private static let decodeGate = DecodeGate(maxConcurrent: 3)
     
     private let thumbnailCache = NSCache<NSURL, CGImage>()
     private let previewCache = NSCache<NSURL, CGImage>()
@@ -30,6 +80,7 @@ public actor ImageProvider {
     private struct TaskKey: Hashable {
         let url: URL
         let tier: ImageTier
+        let prefersEmbeddedPreview: Bool
     }
     
     private var decodeTasks: [TaskKey: Task<CGImage?, Never>] = [:]
@@ -79,14 +130,16 @@ public actor ImageProvider {
             if let cached = fullCache.object(forKey: nsURL) { return cached }
         }
         
-        let key = TaskKey(url: photo.url, tier: tier)
+        let key = TaskKey(url: photo.url, tier: tier,
+                          prefersEmbeddedPreview: photo.prefersEmbeddedPreview)
         if let existingTask = decodeTasks[key] {
             return await existingTask.value
         }
         
         let task = Task {
             let targetURL = photo.pairedURL ?? photo.url
-            let image = await decode(url: targetURL, tier: tier)
+            let image = await decode(url: targetURL, tier: tier,
+                                     prefersEmbeddedPreview: photo.prefersEmbeddedPreview)
             if let image, !Task.isCancelled {
                 self.store(image, forKey: nsURL, tier: tier)
             }
@@ -126,7 +179,8 @@ public actor ImageProvider {
     public func cancelPrefetch(for photos: [PhotoRef]) {
         for photo in photos {
             for tier in [ImageTier.thumbnail, .preview, .full] {
-                let key = TaskKey(url: photo.url, tier: tier)
+                let key = TaskKey(url: photo.url, tier: tier,
+                                  prefersEmbeddedPreview: photo.prefersEmbeddedPreview)
                 if let task = decodeTasks[key] {
                     task.cancel()
                     decodeTasks[key] = nil
@@ -135,13 +189,28 @@ public actor ImageProvider {
         }
     }
     
-    private nonisolated func decode(url: URL, tier: ImageTier) async -> CGImage? {
+    private nonisolated func decode(url: URL, tier: ImageTier,
+                                    prefersEmbeddedPreview: Bool) async -> CGImage? {
         if isVideo(url: url) {
             return await decodeVideo(url: url, tier: tier)
         }
+
+        let queueStart = DispatchTime.now()
+        await ImageProvider.decodeGate.acquire()
+        let queueMS = Diag.elapsedMS(since: queueStart)
+        guard !Task.isCancelled else {
+            await ImageProvider.decodeGate.release()
+            return nil
+        }
+
+        // Preserve the request's priority. Speculative prefetch enters at `.utility`;
+        // interactive cells and the loupe stay user-initiated.
+        let priority = Task.currentPriority
         // Offload decode to a detached task to avoid blocking the actor
-        return await Task.detached(priority: .userInitiated) {
+        let result: CGImage? = await Task.detached(priority: priority) { () -> CGImage? in
             let diagStart = DispatchTime.now()
+            var decodedPixels = 0
+            var decodePath = "full-raster"
             guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
                 return nil
             }
@@ -149,31 +218,61 @@ public actor ImageProvider {
                 if Diag.isEnabled {
                     let ms = Diag.elapsedMS(since: diagStart)
                     let tierName = String(describing: tier)
-                    Task { await Diag.DecodeStats.shared.record(tier: tierName, ms: ms, pixels: 0) }
+                    let pixelCount = decodedPixels
+                    Task { await Diag.DecodeStats.shared.record(tier: tierName, ms: ms,
+                                                                pixels: pixelCount) }
                     // Anything this slow per image is what the user is feeling.
                     if ms > 250 {
-                        Diag.log(String(format: "slow decode [%@] %.0f ms — %@", tierName, ms, url.lastPathComponent))
+                        Diag.log(String(format: "slow decode [%@/%@] %.0f ms — %@",
+                                        tierName, decodePath, ms, url.lastPathComponent))
                     }
                 }
             }
-            
+
+            let decoded: CGImage?
             switch tier {
             case .thumbnail:
-                let options: [CFString: Any] = [
-                    kCGImageSourceCreateThumbnailFromImageAlways: true,
-                    kCGImageSourceCreateThumbnailWithTransform: true,
-                    kCGImageSourceThumbnailMaxPixelSize: 512,
-                    kCGImageSourceShouldCacheImmediately: true
-                ]
-                return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+                // `...FromImageAlways` explicitly discards an embedded thumbnail and
+                // rasterizes the full source. On hundreds of CR3/RAF files that made every
+                // filmstrip cell perform a full RAW conversion just to draw ~100 points.
+                // Ask ImageIO for the camera preview first; if one is absent, ImageIO still
+                // creates the requested 512px image from the full source as a fallback.
+                let useEmbedded = prefersEmbeddedPreview
+                decodePath = useEmbedded ? "embedded-first" : "full-raster"
+                let options = ImageProvider.thumbnailOptions(maxPixelSize: 512,
+                                                             preferEmbedded: useEmbedded)
+                let image = CGImageSourceCreateThumbnailAtIndex(source, 0,
+                                                                 options as CFDictionary)
+                decoded = image.flatMap { ImageProvider.downscaled($0, maxPixelSize: 512) }
             case .preview:
-                let options: [CFString: Any] = [
-                    kCGImageSourceCreateThumbnailFromImageAlways: true,
-                    kCGImageSourceCreateThumbnailWithTransform: true,
-                    kCGImageSourceThumbnailMaxPixelSize: 3200,
-                    kCGImageSourceShouldCacheImmediately: true
-                ]
-                return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+                if prefersEmbeddedPreview {
+                    let embeddedOptions = ImageProvider.thumbnailOptions(maxPixelSize: 3200,
+                                                                         preferEmbedded: true)
+                    let embedded = CGImageSourceCreateThumbnailAtIndex(
+                        source, 0, embeddedOptions as CFDictionary
+                    )
+
+                    // Modern RAWs generally carry a large camera JPEG. Keep it when it is
+                    // useful for a loupe; tiny EXIF thumbnails still fall back to a 3200px
+                    // raster so the main viewer is not left showing a soft 160px image.
+                    if let embedded, max(embedded.width, embedded.height) >= 1200 {
+                        decodePath = "embedded-preview"
+                        decoded = ImageProvider.downscaled(embedded, maxPixelSize: 3200)
+                    } else {
+                        decodePath = "small-preview-fallback"
+                        let options = ImageProvider.thumbnailOptions(maxPixelSize: 3200,
+                                                                     preferEmbedded: false)
+                        decoded = CGImageSourceCreateThumbnailAtIndex(
+                            source, 0, options as CFDictionary
+                        )
+                    }
+                } else {
+                    let options = ImageProvider.thumbnailOptions(maxPixelSize: 3200,
+                                                                 preferEmbedded: false)
+                    decoded = CGImageSourceCreateThumbnailAtIndex(
+                        source, 0, options as CFDictionary
+                    )
+                }
             case .full:
                 // CGImageSourceCreateImageAtIndex ignores EXIF orientation (the transform key is
                 // a no-op there), so portrait photos came back sideways the moment full quality
@@ -192,9 +291,62 @@ public actor ImageProvider {
                     // Cap at native size so we get full resolution without upscaling.
                     options[kCGImageSourceThumbnailMaxPixelSize] = maxDimension
                 }
-                return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+                decoded = CGImageSourceCreateThumbnailAtIndex(source, 0,
+                                                               options as CFDictionary)
             }
+
+            if let decoded {
+                decodedPixels = decoded.width * decoded.height
+            }
+            return decoded
         }.value
+        await ImageProvider.decodeGate.release()
+
+        if Diag.isEnabled, queueMS > 250 {
+            Diag.log(String(format: "decode queue [%@] waited %.0f ms — %@",
+                            String(describing: tier), queueMS, url.lastPathComponent))
+        }
+        return result
+    }
+
+    /// ImageIO's two similarly named thumbnail flags have opposite performance semantics:
+    /// `IfAbsent` preserves an embedded camera preview, while `Always` forces full decoding.
+    private nonisolated static func thumbnailOptions(maxPixelSize: Int,
+                                                     preferEmbedded: Bool) -> [CFString: Any] {
+        var options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+            kCGImageSourceShouldCacheImmediately: true
+        ]
+        if preferEmbedded {
+            options[kCGImageSourceCreateThumbnailFromImageIfAbsent] = true
+        } else {
+            options[kCGImageSourceCreateThumbnailFromImageAlways] = true
+        }
+        return options
+    }
+
+    /// ImageIO does not guarantee `ThumbnailMaxPixelSize` will resize a thumbnail that was
+    /// already embedded. Bound that bitmap before it enters NSCache without touching the RAW.
+    private nonisolated static func downscaled(_ image: CGImage,
+                                               maxPixelSize: Int) -> CGImage? {
+        let largest = max(image.width, image.height)
+        guard largest > maxPixelSize else { return image }
+
+        let scale = CGFloat(maxPixelSize) / CGFloat(largest)
+        let width = max(1, Int((CGFloat(image.width) * scale).rounded()))
+        let height = max(1, Int((CGFloat(image.height) * scale).rounded()))
+        let colorSpace = image.colorSpace?.model == .rgb
+            ? (image.colorSpace ?? CGColorSpaceCreateDeviceRGB())
+            : CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(data: nil, width: width, height: height,
+                                      bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: colorSpace,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return image }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage() ?? image
     }
 
     private nonisolated func isVideo(url: URL) -> Bool {

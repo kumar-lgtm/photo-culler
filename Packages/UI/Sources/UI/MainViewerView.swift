@@ -385,7 +385,8 @@ struct LoupeView: View {
         }
 
         loadTask = Task {
-            let ref = PhotoRef(id: photo.id, url: photo.url, pairedURL: photo.pairedURL)
+            let ref = PhotoRef(id: photo.id, url: photo.url, pairedURL: photo.pairedURL,
+                               prefersEmbeddedPreview: photo.isRAW && photo.pairedURL == nil)
 
             // Load thumbnail first for instant feedback
             if let thumb = await workspace.imageProvider.image(for: ref, tier: .thumbnail),
@@ -404,7 +405,11 @@ struct LoupeView: View {
                 // browsing cost ~200MB per 50MP JPEG on every navigation.
                 let scale = NSScreen.main?.backingScaleFactor ?? 2.0
                 let neededPixels = max(viewSize.width, viewSize.height) * scale
-                if CGFloat(max(preview.width, preview.height)) < neededPixels {
+                // A usable camera JPEG is the intentional browsing surface for unpaired
+                // RAWs. Do not immediately negate that fast path with a native RAW render;
+                // zooming or Actual Size still requests `.full` on demand.
+                if !ref.prefersEmbeddedPreview,
+                   CGFloat(max(preview.width, preview.height)) < neededPixels {
                     loadFullQualityIfNeeded()
                 }
             }
@@ -424,7 +429,8 @@ struct LoupeView: View {
               !photo.isVideo else { return }
 
         fullQualityTask = Task {
-            let ref = PhotoRef(id: photo.id, url: photo.url, pairedURL: photo.pairedURL)
+            let ref = PhotoRef(id: photo.id, url: photo.url, pairedURL: photo.pairedURL,
+                               prefersEmbeddedPreview: photo.isRAW && photo.pairedURL == nil)
             let full = await workspace.imageProvider.image(for: ref, tier: .full)
 
             // Always clear the slot, so a failed or superseded decode doesn't permanently
@@ -741,7 +747,8 @@ struct ThumbnailView: View {
         }
         .task(id: photo.id) {
             imageLoadFinished = false
-            let ref = PhotoRef(id: photo.id, url: photo.url, pairedURL: photo.pairedURL)
+            let ref = PhotoRef(id: photo.id, url: photo.url, pairedURL: photo.pairedURL,
+                               prefersEmbeddedPreview: photo.isRAW && photo.pairedURL == nil)
             image = await imageProvider.image(for: ref, tier: .thumbnail)
             imageLoadFinished = true
         }

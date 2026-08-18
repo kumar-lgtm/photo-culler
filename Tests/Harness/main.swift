@@ -15,6 +15,17 @@ setvbuf(stdout, nil, _IOLBF, 0)
 // touches the user's files is.
 
 // `--bench` measures instead of asserting; see Benchmarks.swift.
+if let rawIndex = CommandLine.arguments.firstIndex(of: "--bench-raw-file") {
+    let paths = Array(CommandLine.arguments.dropFirst(rawIndex + 1))
+    do { try await RawFileBenchmark.run(paths: paths); exit(0) }
+    catch { print("benchmark failed: \(error.localizedDescription)"); exit(1) }
+}
+
+if CommandLine.arguments.contains("--bench-storm") {
+    do { try await DecodeStormBenchmark.run(); exit(0) }
+    catch { print("benchmark failed: \(error)"); exit(1) }
+}
+
 if CommandLine.arguments.contains("--bench-open") {
     _ = NSApplication.shared
     do {
@@ -44,6 +55,7 @@ print("\u{001B}[1mPhoto Culler — regression suite\u{001B}[0m")
 _ = NSApplication.shared
 
 do {
+    try await DecodeSuite.run(runner)
     try await SidecarSuite.run(runner)
     try RenameSuite.run(runner)
     try await CatalogSuite.run(runner)

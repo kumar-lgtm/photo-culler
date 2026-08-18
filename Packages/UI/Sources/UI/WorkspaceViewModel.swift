@@ -470,6 +470,7 @@ public class WorkspaceViewModel: ObservableObject {
         // Detached on purpose: a plain `Task {}` inside this @MainActor type inherits main
         // actor isolation, which would run a sidecar read per photo on the main thread.
         metadataLoadTask = Task.detached(priority: .utility) { [weak self] in
+            let started = DispatchTime.now()
             let sidecar = SidecarManager()
             var cache: [UUID: PhotoMetadata] = [:]
 
@@ -482,6 +483,8 @@ public class WorkspaceViewModel: ObservableObject {
             }
 
             guard !Task.isCancelled else { return }
+            Diag.log(String(format: "  metadata: %.0f ms, %d sidecars found across %d media items",
+                            Diag.elapsedMS(since: started), cache.count, items.count))
             await self?.mergeMetadataCache(cache, generation: generation)
         }
     }
@@ -766,13 +769,21 @@ public class WorkspaceViewModel: ObservableObject {
         let endThumb = min(photos.count, index + 20)
         let thumbRefs = (startThumb..<endThumb)
             .sorted { abs($0 - index) < abs($1 - index) }
-            .map { PhotoRef(id: photos[$0].id, url: photos[$0].url, pairedURL: photos[$0].pairedURL) }
+            .map {
+                let photo = photos[$0]
+                return PhotoRef(id: photo.id, url: photo.url, pairedURL: photo.pairedURL,
+                                prefersEmbeddedPreview: photo.isRAW && photo.pairedURL == nil)
+            }
 
         let startPrev = max(0, index - 3)
         let endPrev = min(photos.count, index + 3)
         let prevRefs = (startPrev..<endPrev)
             .sorted { abs($0 - index) < abs($1 - index) }
-            .map { PhotoRef(id: photos[$0].id, url: photos[$0].url, pairedURL: photos[$0].pairedURL) }
+            .map {
+                let photo = photos[$0]
+                return PhotoRef(id: photo.id, url: photo.url, pairedURL: photo.pairedURL,
+                                prefersEmbeddedPreview: photo.isRAW && photo.pairedURL == nil)
+            }
 
         Task {
             await imageProvider.prefetch(photos: thumbRefs, tier: .thumbnail)
