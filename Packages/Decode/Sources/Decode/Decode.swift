@@ -71,7 +71,18 @@ public actor ImageProvider {
 
     /// Three lanes leave room for a loupe preview plus visible filmstrip thumbnails while
     /// preventing a SwiftUI task storm from asking ImageIO to rasterize every RAW at once.
-    private static let decodeGate = DecodeGate(maxConcurrent: 3)
+    /// Sized from the machine rather than a fixed 3.
+    ///
+    /// Measured on real 5760x3840 Canon CR2 files (18-core M-series), projected to a
+    /// 449-file folder:
+    ///
+    ///     thumbnails 512px   1-wide 13.2s | 3-wide 4.1s | 8-wide 3.2s | 16-wide 3.2s
+    ///     previews   3200px  1-wide 60.0s | 3-wide 21.9s | 8-wide 10.6s | 16-wide 7.1s
+    ///
+    /// Most of the win lands by 8, so this leaves headroom rather than claiming every core.
+    private static let decodeGate = DecodeGate(
+        maxConcurrent: max(4, min(ProcessInfo.processInfo.processorCount - 2, 12))
+    )
     
     private let thumbnailCache = NSCache<NSURL, CGImage>()
     private let previewCache = NSCache<NSURL, CGImage>()
@@ -155,13 +166,23 @@ public actor ImageProvider {
     public func prefetch(photos: [PhotoRef], tier: ImageTier) {
         prefetchTasks[tier]?.cancel()
 
-        // `photos` arrives in nearest-first order. Decode serially so foreground requests
-        // can run immediately instead of competing with dozens of speculative decodes.
+        // `photos` arrives in nearest-first order. Fan out rather than decoding one file at
+        // a time: `decodeGate` already bounds how much blocking ImageIO work is in flight,
+        // so a strictly serial lane only adds latency.
+        //
+        // Prefetch stays at `.utility`, so a visible cell or the loupe still wins the gate
+        // ahead of speculative work.
         let task = Task(priority: .utility) { [weak self] in
             guard let self else { return }
-            for photo in photos {
-                guard !Task.isCancelled else { return }
-                _ = await self.image(for: photo, tier: tier)
+            await withTaskGroup(of: Void.self) { group in
+                for photo in photos {
+                    guard !Task.isCancelled else { break }
+                    group.addTask(priority: .utility) { [weak self] in
+                        guard let self, !Task.isCancelled else { return }
+                        _ = await self.image(for: photo, tier: tier)
+                    }
+                }
+                await group.waitForAll()
             }
         }
         prefetchTasks[tier] = task
