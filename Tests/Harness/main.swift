@@ -15,6 +15,12 @@ setvbuf(stdout, nil, _IOLBF, 0)
 // touches the user's files is.
 
 // `--bench` measures instead of asserting; see Benchmarks.swift.
+if let i = CommandLine.arguments.firstIndex(of: "--bench-raw-dir"),
+   i + 1 < CommandLine.arguments.count {
+    do { try await RawFolderBenchmark.run(path: CommandLine.arguments[i + 1]); exit(0) }
+    catch { print("benchmark failed: \(error)"); exit(1) }
+}
+
 if let rawIndex = CommandLine.arguments.firstIndex(of: "--bench-raw-file") {
     let paths = Array(CommandLine.arguments.dropFirst(rawIndex + 1))
     do { try await RawFileBenchmark.run(paths: paths); exit(0) }
