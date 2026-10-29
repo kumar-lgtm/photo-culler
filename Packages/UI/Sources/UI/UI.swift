@@ -5,13 +5,15 @@ struct ShortcutRow: View {
     let action: String
     
     var body: some View {
-        HStack {
+        HStack(alignment: .top, spacing: 8) {
             Text(action)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Spacer()
+                .lineLimit(nil)
+            Spacer(minLength: 4)
             Text(key)
                 .font(.system(.caption, design: .monospaced))
+                .fixedSize()
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .background(.fill.tertiary)

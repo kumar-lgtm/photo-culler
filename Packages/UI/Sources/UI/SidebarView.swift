@@ -25,6 +25,8 @@ struct SidebarView: View {
                     Text(emptyRecentsLabel)
                         .foregroundStyle(.secondary)
                         .font(.caption)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
                 } else {
                     ForEach(filteredRecents, id: \.id) { recent in
                         Button(action: {
@@ -43,6 +45,8 @@ struct SidebarView: View {
                     Text(emptyFavoritesLabel)
                         .foregroundStyle(.secondary)
                         .font(.caption)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
                 } else {
                     ForEach(filteredFavorites, id: \.id) { fav in
                         Button(action: {
@@ -82,8 +86,10 @@ struct SidebarView: View {
             
             Section(workspace.isBeigeMode ? "winnow" : "Filters") {
                 Toggle(isOn: $workspace.filterSettings.hideRejects) {
-                    Label(workspace.isBeigeMode ? "hide what you let go" : "Hide Rejects", systemImage: "flag.slash")
+                    Label(workspace.isBeigeMode ? "hide rejects" : "Hide Rejects", systemImage: "flag.slash")
                         .font(.body)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .toggleStyle(.switch)
                 .help("Hide photos flagged as rejects (X) from all views.")
@@ -93,6 +99,8 @@ struct SidebarView: View {
                 Toggle(isOn: $workspace.isBeigeMode) {
                     Label(workspace.isBeigeMode ? "minimalist luxe ✨" : "Minimalist Luxe (Beige)", systemImage: workspace.isBeigeMode ? "heart.fill" : "sparkles")
                         .font(.body)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .toggleStyle(.switch)
                 .help("Enable clean UI, scandi-beige, tongue-in-cheek aesthetic.")
