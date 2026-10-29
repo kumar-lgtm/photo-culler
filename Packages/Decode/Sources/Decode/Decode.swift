@@ -84,9 +84,9 @@ public actor ImageProvider {
         maxConcurrent: max(4, min(ProcessInfo.processInfo.processorCount - 2, 12))
     )
     
-    private let thumbnailCache = NSCache<NSURL, CGImage>()
-    private let previewCache = NSCache<NSURL, CGImage>()
-    private let fullCache = NSCache<NSURL, CGImage>()
+    private let thumbnailCache = NSCache<NSString, CGImage>()
+    private let previewCache = NSCache<NSString, CGImage>()
+    private let fullCache = NSCache<NSString, CGImage>()
 
     private struct TaskKey: Hashable {
         let url: URL
@@ -121,7 +121,7 @@ public actor ImageProvider {
         return max(1, bytesPerRow * image.height)
     }
 
-    private func store(_ image: CGImage, forKey key: NSURL, tier: ImageTier) {
+    private func store(_ image: CGImage, forKey key: NSString, tier: ImageTier) {
         switch tier {
         case .thumbnail: thumbnailCache.setObject(image, forKey: key, cost: cost(of: image))
         case .preview:   previewCache.setObject(image, forKey: key, cost: cost(of: image))
@@ -130,29 +130,31 @@ public actor ImageProvider {
     }
     
     public func image(for photo: PhotoRef, tier: ImageTier) async -> CGImage? {
-        let nsURL = photo.url as NSURL
+        let targetURL = photo.pairedURL ?? photo.url
+        // Filtering a JPEG out of a pair changes the source while keeping photo.url.
+        // Embedded-first and full-raster thumbnails can differ too (160px vs 512px).
+        let cacheKey = "\(photo.prefersEmbeddedPreview)|\(targetURL.absoluteString)" as NSString
         
         switch tier {
         case .thumbnail:
-            if let cached = thumbnailCache.object(forKey: nsURL) { return cached }
+            if let cached = thumbnailCache.object(forKey: cacheKey) { return cached }
         case .preview:
-            if let cached = previewCache.object(forKey: nsURL) { return cached }
+            if let cached = previewCache.object(forKey: cacheKey) { return cached }
         case .full:
-            if let cached = fullCache.object(forKey: nsURL) { return cached }
+            if let cached = fullCache.object(forKey: cacheKey) { return cached }
         }
         
-        let key = TaskKey(url: photo.url, tier: tier,
+        let key = TaskKey(url: targetURL, tier: tier,
                           prefersEmbeddedPreview: photo.prefersEmbeddedPreview)
         if let existingTask = decodeTasks[key] {
             return await existingTask.value
         }
         
         let task = Task {
-            let targetURL = photo.pairedURL ?? photo.url
             let image = await decode(url: targetURL, tier: tier,
                                      prefersEmbeddedPreview: photo.prefersEmbeddedPreview)
             if let image, !Task.isCancelled {
-                self.store(image, forKey: nsURL, tier: tier)
+                self.store(image, forKey: cacheKey, tier: tier)
             }
             // Remove task once done
             self.decodeTasks[key] = nil
@@ -200,7 +202,7 @@ public actor ImageProvider {
     public func cancelPrefetch(for photos: [PhotoRef]) {
         for photo in photos {
             for tier in [ImageTier.thumbnail, .preview, .full] {
-                let key = TaskKey(url: photo.url, tier: tier,
+                let key = TaskKey(url: photo.pairedURL ?? photo.url, tier: tier,
                                   prefersEmbeddedPreview: photo.prefersEmbeddedPreview)
                 if let task = decodeTasks[key] {
                     task.cancel()

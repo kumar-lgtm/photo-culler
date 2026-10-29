@@ -28,6 +28,9 @@ public struct ShellView: View {
                         .inspectorColumnWidth(min: 250, ideal: 300, max: 400)
                 }
         }
+        // Give the sidebar, viewer and inspector a viable initial layout. An unconstrained
+        // window can repeatedly invalidate AppKit constraints during its first layout.
+        .frame(minWidth: 1000, minHeight: 700)
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 Button("Open Folder", systemImage: "folder", action: openFolderPanel)

@@ -10,6 +10,12 @@ enum IngestSuite {
         t.suite("Ingest — duplicate destination names rejected (2.5)")
         try await duplicateNames(t)
 
+        t.suite("Ingest — recursive duplicate names refused without a template")
+        try await recursiveCollisions(t)
+
+        t.suite("Ingest — renamed RAW+JPEG pairs keep a shared stem and metadata")
+        try await renamedPairs(t)
+
         t.suite("Ingest — both destinations receive files (2.6)")
         try await dualDestination(t)
 
@@ -44,6 +50,53 @@ enum IngestSuite {
     }
 
     // MARK: -
+
+    private static func recursiveCollisions(_ t: TestRunner) async throws {
+        let card = try TempDir.make("card-collisions"); defer { TempDir.cleanup(card) }
+        let dest = try TempDir.make("dest"); defer { TempDir.cleanup(dest) }
+        for folder in ["A", "B"] {
+            let sub = card.appendingPathComponent(folder)
+            try FileManager.default.createDirectory(at: sub, withIntermediateDirectories: true)
+            try Data(folder.utf8).write(to: sub.appendingPathComponent("IMG_0001.JPG"))
+        }
+        do {
+            _ = try await IngestManager().run(job: IngestJob(sourceURL: card, primaryDestination: dest)) { _ in }
+            t.fail("recursive files sharing a basename must not be silently skipped")
+        } catch IngestError.duplicateDestinationNames(_, let count) {
+            t.equal(count, 2, "duplicate source names detected before copying")
+        }
+        t.equal(contents(dest).count, 0, "ambiguous recursive ingest leaves the destination untouched")
+
+        // Even distinct media filenames can overwrite a shared sidecar / create a false pair.
+        try FileManager.default.moveItem(at: card.appendingPathComponent("A/IMG_0001.JPG"),
+                                        to: card.appendingPathComponent("A/IMG_0001.CR2"))
+        do {
+            _ = try await IngestManager().run(job: IngestJob(sourceURL: card, primaryDestination: dest)) { _ in }
+            t.fail("unrelated captures must not acquire a shared sidecar during ingest")
+        } catch IngestError.duplicateDestinationNames {
+            t.check(true, "cross-folder sidecar collision refused before copying")
+        }
+        t.equal(contents(dest).count, 0, "sidecar collision leaves destination untouched")
+    }
+
+    private static func renamedPairs(_ t: TestRunner) async throws {
+        let card = try TempDir.make("card-pairs"); defer { TempDir.cleanup(card) }
+        let dest = try TempDir.make("dest"); defer { TempDir.cleanup(dest) }
+        for stem in ["IMG_0001", "IMG_0002"] {
+            for ext in ["CR2", "JPG"] {
+                try Data("media".utf8).write(to: card.appendingPathComponent("\(stem).\(ext)"))
+            }
+            try SidecarManager().write(PhotoMetadata(rating: 4), to: card.appendingPathComponent("\(stem).xmp"))
+        }
+        let result = try await IngestManager().run(job: IngestJob(
+            sourceURL: card, primaryDestination: dest, renameTemplate: "shoot_{Sequence(0001)}"
+        )) { _ in }
+        t.equal(result.copiedFiles.count, 4, "all pair members copied")
+        let scanned = try await CatalogScanner().scan(folderURL: dest)
+        t.equal(scanned.count, 2, "renamed output still scans as two pairs")
+        t.check(scanned.allSatisfy(\.isRAWJPEGPair), "each renamed RAW keeps its matching JPEG")
+        t.equal(contents(dest).filter { $0.hasSuffix(".xmp") }.count, 2, "one sidecar per renamed pair")
+    }
 
     private static func duplicateNames(_ t: TestRunner) async throws {
         let card = try makeCard(5); defer { TempDir.cleanup(card) }

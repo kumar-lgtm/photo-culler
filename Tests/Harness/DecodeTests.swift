@@ -16,6 +16,9 @@ enum DecodeSuite {
     static func run(_ t: TestRunner) async throws {
         t.suite("Decode — RAW browsing uses embedded camera previews")
         try await embeddedPreviewFastPath(t)
+
+        t.suite("Decode — cache follows the selected source and decoding policy")
+        try await sourceIdentity(t)
     }
 
     private static func embeddedPreviewFastPath(_ t: TestRunner) async throws {
@@ -73,9 +76,26 @@ enum DecodeSuite {
                 "ordinary JPEG thumbnails retain the 512px quality path")
     }
 
-    private static func writeJPEGWithEmbeddedThumbnail(to url: URL) throws {
-        let width = 1600
-        let height = 1200
+    private static func sourceIdentity(_ t: TestRunner) async throws {
+        let dir = try TempDir.make("decode-sources")
+        defer { TempDir.cleanup(dir) }
+        let original = dir.appendingPathComponent("original.jpg")
+        let paired = dir.appendingPathComponent("paired.jpg")
+        try writeJPEGWithEmbeddedThumbnail(to: original)
+        try writeJPEGWithEmbeddedThumbnail(to: paired, width: 900, height: 600)
+
+        let provider = ImageProvider()
+        let pairImage = await provider.image(for: PhotoRef(url: original, pairedURL: paired), tier: .full)
+        let originalImage = await provider.image(for: PhotoRef(url: original), tier: .full)
+        t.equal(pairImage?.width, 900, "paired mode decodes the JPEG source")
+        t.equal(originalImage?.width, 1600, "unpairing does not return the cached paired JPEG")
+
+        _ = await provider.image(for: PhotoRef(url: original, prefersEmbeddedPreview: true), tier: .thumbnail)
+        let qualityImage = await provider.image(for: PhotoRef(url: original), tier: .thumbnail)
+        t.equal(qualityImage?.width, 512, "embedded-preview cache does not override the quality policy")
+    }
+
+    private static func writeJPEGWithEmbeddedThumbnail(to url: URL, width: Int = 1600, height: Int = 1200) throws {
         guard let context = CGContext(data: nil, width: width, height: height,
                                       bitsPerComponent: 8, bytesPerRow: 0,
                                       space: CGColorSpaceCreateDeviceRGB(),

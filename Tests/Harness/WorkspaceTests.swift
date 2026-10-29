@@ -33,9 +33,68 @@ enum WorkspaceSuite {
 
         t.suite("Workspace — metadata editor commit (2.7/5.16)")
         try await metadataCommit(t)
+
+        t.suite("Workspace — templates preserve unloaded metadata and update filters")
+        try await templatePreservation(t)
+
+        t.suite("Workspace — shared sidecar cache stays synchronized as catalogs change")
+        cacheIdentity(t)
     }
 
     // MARK: - Fixtures
+
+    private static func cacheIdentity(_ t: TestRunner) {
+        let vm = makeViewModel()
+        let raw = PhotoItem(url: URL(fileURLWithPath: "/tmp/pcqa-index/one.CR2"), modificationDate: Date(), fileSize: 1)
+        let jpeg = PhotoItem(url: URL(fileURLWithPath: "/tmp/pcqa-index/one.JPG"), modificationDate: Date(), fileSize: 1)
+        let other = PhotoItem(url: URL(fileURLWithPath: "/tmp/pcqa-index/two.JPG"), modificationDate: Date(), fileSize: 1)
+        vm.allPhotos = [raw, other]
+        vm.pairedJPGItems = [jpeg]
+        vm.cacheMetadata(PhotoMetadata(rating: 4), for: raw)
+        t.equal(vm.metadataCache[raw.id]?.rating, 4, "raw cache receives the tag")
+        t.equal(vm.metadataCache[jpeg.id]?.rating, 4, "paired JPEG shares its sidecar metadata")
+        t.equal(vm.metadataCache[other.id], nil, "unrelated photo is untouched")
+
+        let replacement = PhotoItem(url: raw.url, modificationDate: Date(), fileSize: 1)
+        vm.allPhotos = [replacement]
+        vm.pairedJPGItems = []
+        vm.metadataCache = [:]
+        vm.cacheMetadata(PhotoMetadata(rating: 2), for: replacement)
+        t.equal(vm.metadataCache[replacement.id]?.rating, 2, "replacement catalog rebuilds the lookup")
+        t.equal(vm.metadataCache[raw.id], nil, "retired catalog IDs are not updated")
+        t.equal(vm.metadataCache[jpeg.id], nil, "removed pair members are not updated")
+    }
+
+    private static func templatePreservation(_ t: TestRunner) async throws {
+        let dir = try makeShoot(1); defer { TempDir.cleanup(dir) }
+        let raw = dir.appendingPathComponent("IMG_0001.CR2")
+        let sidecar = dir.appendingPathComponent("IMG_0001.xmp")
+        try SidecarManager().write(PhotoMetadata(rating: 5, label: .red, description: "Existing caption"), to: sidecar)
+        // Model the interval before the background sidecar sweep reaches this item.
+        let vm = makeViewModel()
+        let photo = PhotoItem(url: raw, modificationDate: Date(), fileSize: 3)
+        vm.allPhotos = [photo]
+        vm.filterSettings.enabledFileExtensions = ["cr2"]
+        vm.selection = [photo.id]
+        vm.applyTemplate(MetadataTemplate(name: "Copyright", copyright: "© KCI"))
+        await settle(vm)
+        let onDisk = try SidecarManager().read(from: sidecar)
+        t.equal(onDisk.rating, 5, "template preserves a rating not yet loaded into the cache")
+        t.equal(onDisk.label, .red, "template preserves an unloaded color label")
+        t.equal(onDisk.description, "Existing caption", "template preserves an unloaded caption")
+        t.equal(onDisk.copyright, "© KCI", "template adds the requested field")
+
+        // An unloaded rejection is initially visible. Loading it as part of a template
+        // application must remove it when Hide Rejects is active.
+        try SidecarManager().write(PhotoMetadata(rating: 5, flag: .reject), to: sidecar)
+        vm.metadataCache = [:]
+        vm.filterSettings.hideRejects = true
+        t.equal(vm.photos.count, 1, "unloaded rejection initially remains visible")
+        vm.selection = [photo.id]
+        vm.applyTemplate(MetadataTemplate(name: "Credit", creator: "Photographer"))
+        t.equal(vm.photos.count, 0, "template refreshes the active metadata filter")
+        await settle(vm)
+    }
 
     private static func makeViewModel() -> WorkspaceViewModel {
         WorkspaceViewModel(scanner: CatalogScanner(),

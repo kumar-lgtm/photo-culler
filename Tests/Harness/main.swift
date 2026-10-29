@@ -15,6 +15,12 @@ setvbuf(stdout, nil, _IOLBF, 0)
 // touches the user's files is.
 
 // `--bench` measures instead of asserting; see Benchmarks.swift.
+if CommandLine.arguments.contains("--bench-metadata") {
+    _ = NSApplication.shared
+    Benchmarks.metadataCacheBenchmark()
+    exit(0)
+}
+
 if let i = CommandLine.arguments.firstIndex(of: "--bench-raw-dir"),
    i + 1 < CommandLine.arguments.count {
     do { try await RawFolderBenchmark.run(path: CommandLine.arguments[i + 1]); exit(0) }

@@ -73,9 +73,14 @@ public class WorkspaceViewModel: ObservableObject {
     @Published public private(set) var extensionCounts: [String: Int] = [:]
     /// Sidecar files loaded from disk (e.g. written by Lightroom) so they can be filtered
     /// out of the displayed catalog instead of appearing as broken "Preview unavailable" tiles.
-    public var allPhotos: [PhotoItem] = []
-    public var pairedJPGItems: [PhotoItem] = []
+    public var allPhotos: [PhotoItem] = [] {
+        didSet { metadataIDsBySidecarURL = nil }
+    }
+    public var pairedJPGItems: [PhotoItem] = [] {
+        didSet { metadataIDsBySidecarURL = nil }
+    }
     public var pairedJPGItemsByRawID: [UUID: PhotoItem] = [:]
+    private var metadataIDsBySidecarURL: [URL: [UUID]]?
 
     /// Codes stay loaded for the session instead of dying with the Metadata Editor sheet.
     @Published public var codeReplacementManager: CodeReplacementManager?
@@ -335,7 +340,8 @@ public class WorkspaceViewModel: ObservableObject {
 
         for photo in targets {
             let sidecarURL = metadataSidecarURL(for: photo)
-            var metadata = metadataCache[photo.id] ?? PhotoMetadata()
+            var metadata = metadataCache[photo.id]
+                ?? (try? sidecarManager.read(from: sidecarURL)) ?? PhotoMetadata()
             metadata = template.apply(to: metadata)
             cacheMetadata(metadata, for: photo)
 
@@ -351,6 +357,7 @@ public class WorkspaceViewModel: ObservableObject {
             writeCoordinator.submit(job)
         }
 
+        if filtersDependOnMetadata { applyFilters() }
         showHUD(.message("Applied to \(targets.count)"))
     }
 
@@ -414,7 +421,11 @@ public class WorkspaceViewModel: ObservableObject {
             let scanner = self.scanner
             let task = Task { try await scanner.scan(folderURL: url, recursive: true) }
             scanTask = task
-            let loadedPhotos = try await task.value
+            let loadedPhotos = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
             Diag.log(String(format: "  scan: %.0f ms, %d items", Diag.elapsedMS(since: scanStart), loadedPhotos.count))
             guard generation == folderGeneration else { return }
             scanTask = nil
@@ -473,13 +484,16 @@ public class WorkspaceViewModel: ObservableObject {
             let started = DispatchTime.now()
             let sidecar = SidecarManager()
             var cache: [UUID: PhotoMetadata] = [:]
+            var metadataByURL: [URL: PhotoMetadata] = [:]
+            var visited: Set<URL> = []
 
             for (index, photo) in items.enumerated() {
                 if index % 128 == 0, Task.isCancelled { return }
                 let sidecarURL = photo.url.deletingPathExtension().appendingPathExtension("xmp")
-                if let meta = try? sidecar.read(from: sidecarURL) {
-                    cache[photo.id] = meta
+                if visited.insert(sidecarURL).inserted {
+                    metadataByURL[sidecarURL] = try? sidecar.read(from: sidecarURL)
                 }
+                cache[photo.id] = metadataByURL[sidecarURL]
             }
 
             guard !Task.isCancelled else { return }
@@ -601,8 +615,14 @@ public class WorkspaceViewModel: ObservableObject {
 
     public func cacheMetadata(_ metadata: PhotoMetadata, for photo: PhotoItem) {
         let sidecarURL = metadataSidecarURL(for: photo)
-        for item in allKnownItems() where metadataSidecarURL(for: item) == sidecarURL {
-            metadataCache[item.id] = metadata
+        if metadataIDsBySidecarURL == nil {
+            metadataIDsBySidecarURL = Dictionary(grouping: allKnownItems(), by: metadataSidecarURL)
+                .mapValues { $0.map(\.id) }
+        }
+        // The index is rebuilt only when the catalog changes. Tagging used to construct
+        // a URL for every file on every keypress (and every item of a bulk template).
+        for id in metadataIDsBySidecarURL?[sidecarURL] ?? [photo.id] {
+            metadataCache[id] = metadata
         }
         if let current = currentPhoto, metadataSidecarURL(for: current) == sidecarURL {
             currentMetadata = metadata

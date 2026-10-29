@@ -102,9 +102,8 @@ enum CatalogSuite {
         task.cancel()
 
         do {
-            let items = try await task.value
-            // Cancellation is checked cooperatively, so a fast scan may still complete.
-            t.check(items.count <= 400, "scan completed before the cancellation check (\(items.count) items)")
+            _ = try await task.value
+            t.fail("a scan cancelled before starting must throw CancellationError")
         } catch is CancellationError {
             t.check(true, "scan honoured cancellation")
         }

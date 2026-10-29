@@ -5,6 +5,9 @@ import UniformTypeIdentifiers
 import Catalog
 import Decode
 import Rename
+import UI
+import Sidecar
+import Shortcuts
 
 /// Measures the two claims the README makes: a 10,000-file catalog stays responsive, and
 /// memory stays bounded. Run with `swift run pcqa --bench`.
@@ -22,6 +25,27 @@ import Rename
 ///    headless decode loop under-measures what the app costs with those frames on screen.
 ///    This bounds the *cache*, not the rendered UI.
 enum Benchmarks {
+
+    /// Isolates the per-keystroke metadata-cache work from decoding and disk writes.
+    @MainActor
+    static func metadataCacheBenchmark() {
+        print("Photo Culler — 100 metadata cache updates (no disk I/O)")
+        for count in [1_000, 5_000, 10_000] {
+            let vm = WorkspaceViewModel(scanner: CatalogScanner(), folderManager: FolderManager(),
+                                        imageProvider: ImageProvider(), sidecarManager: SidecarManager(),
+                                        shortcutManager: ShortcutManager())
+            vm.allPhotos = (0..<count).map {
+                PhotoItem(url: URL(fileURLWithPath: "/tmp/pcqa-cache/IMG_\($0).CR2"),
+                          modificationDate: Date(timeIntervalSince1970: 0), fileSize: 1)
+            }
+            let target = vm.allPhotos[count / 2]
+            // Warm the derived lookup independently of the repeated-keystroke measurement.
+            vm.cacheMetadata(PhotoMetadata(), for: target)
+            let start = DispatchTime.now()
+            for i in 0..<100 { vm.cacheMetadata(PhotoMetadata(rating: i % 6), for: target) }
+            print(String(format: "  %5d photos: %8.2f ms", count, seconds(since: start) * 1000))
+        }
+    }
 
     static func run() async throws {
         print("\u{001B}[1mPhoto Culler — benchmarks\u{001B}[0m")

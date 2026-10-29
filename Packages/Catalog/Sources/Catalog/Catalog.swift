@@ -85,7 +85,8 @@ public final class CatalogScanner: Sendable {
     /// so switching folders mid-scan stops the old scan instead of letting it run to
     /// completion and land on top of the new one.
     public func scan(folderURL: URL, recursive: Bool = false) async throws -> [PhotoItem] {
-        return try await Task.detached(priority: .userInitiated) {
+        let scanTask = Task.detached(priority: .userInitiated) { () throws -> [PhotoItem] in
+            try Task.checkCancellation()
             let fileManager = FileManager.default
 
             struct FileInfo {
@@ -173,7 +174,13 @@ public final class CatalogScanner: Sendable {
             }
 
             return items
-        }.value
+        }
+        // Detached work does not inherit cancellation from the caller.
+        return try await withTaskCancellationHandler {
+            try await scanTask.value
+        } onCancel: {
+            scanTask.cancel()
+        }
     }
 }
 

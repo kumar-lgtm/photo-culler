@@ -92,8 +92,8 @@ public enum IngestError: Error, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .duplicateDestinationNames(let example, let count):
-            return "This rename template gives \(count) files the same name (e.g. “\(example)”). "
-                 + "Add a sequence token such as {Sequence(0001)} so every file gets a unique name."
+            return "These source files map to the same destination name (\(count) files, e.g. “\(example)”). "
+                 + "Use a rename template with a sequence token such as {Sequence(0001)} to keep captures distinct."
         case .insufficientSpace(let destination, let needed, let available):
             let f = ByteCountFormatter()
             f.countStyle = .file
@@ -268,16 +268,22 @@ public actor IngestManager {
 
     /// Resolves the destination filename for every source file and refuses ambiguous plans.
     private func planDestinationNames(for sources: [URL], template: String?) throws -> [String] {
-        guard let template, !template.isEmpty else {
-            return sources.map { $0.lastPathComponent }
-        }
-
         var names: [String] = []
         names.reserveCapacity(sources.count)
+        // Sequence represents a capture, not a physical file: RAW+JPEG members share
+        // a stem and sidecar and must keep that relationship after ingest renaming.
+        var sequences: [URL: Int] = [:]
 
-        for (index, source) in sources.enumerated() {
-            let context = RenameContext.forImage(at: source, sequence: index + 1)
-            names.append(renameFormatter.format(template: template, context: context))
+        for source in sources {
+            if let template, !template.isEmpty {
+                let stem = source.deletingPathExtension()
+                let sequence = sequences[stem] ?? (sequences.count + 1)
+                sequences[stem] = sequence
+                let context = RenameContext.forImage(at: source, sequence: sequence)
+                names.append(renameFormatter.format(template: template, context: context))
+            } else {
+                names.append(source.lastPathComponent)
+            }
         }
 
         var seen: [String: Int] = [:]
@@ -286,6 +292,17 @@ public actor IngestManager {
         }
         if let (worstName, count) = seen.max(by: { $0.value < $1.value }), count > 1 {
             throw IngestError.duplicateDestinationNames(example: worstName, collidingCount: count)
+        }
+
+        // Different extensions can still collide on a shared .xmp name. Only members
+        // of the same source capture may share that destination stem.
+        var sidecarSources: [String: Set<URL>] = [:]
+        for (source, name) in zip(sources, names) {
+            let stem = (name as NSString).deletingPathExtension.lowercased()
+            sidecarSources[stem, default: []].insert(source.deletingPathExtension())
+        }
+        if let (stem, captures) = sidecarSources.first(where: { $0.value.count > 1 }) {
+            throw IngestError.duplicateDestinationNames(example: stem + ".xmp", collidingCount: captures.count)
         }
 
         return names
