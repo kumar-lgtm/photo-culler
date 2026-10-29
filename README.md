@@ -84,6 +84,8 @@ swift build -c release
 ```bash
 ./test.sh          # regression suite, plus XCTest packages if full Xcode is installed
 swift run pcqa     # regression suite only
+swift run -c release pcqa  # the same gate with release optimization
+./scripts/qa-ui.sh /tmp/photo-culler-ui  # native UI states and accessibility actions
 ```
 
 The primary gate is a **headless regression suite** (`Tests/Harness`, built as the `pcqa`
@@ -95,6 +97,14 @@ pair-aware renaming, undo, and the full card-ingest path including duplicate-nam
 independent per-destination copying, and cancellation.
 
 The per-package XCTest suites still exist and run automatically when a full Xcode is selected.
+
+The native UI gate builds a debug-only app with an isolated preferences domain and generated
+photos. It checks rendered controls, selection, filter recovery, metadata Save/Cancel and
+write-error retry, then exports PNGs, accessibility trees and `results.json`. It needs a macOS
+desktop session. Inspect the captures as well as the assertions; `capture-method.txt` records
+whether system glass-control layers were captured as a composited window or an NSView bitmap.
+This does not replace a human VoiceOver or physical keyboard audit. The test mode is excluded
+from release builds. The state and flow contract lives in `Tests/UX/ux-contract.json`.
 
 ### Packaging & Distribution
 

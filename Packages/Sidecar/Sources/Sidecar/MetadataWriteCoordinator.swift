@@ -45,7 +45,11 @@ public final class MetadataWriteCoordinator: @unchecked Sendable {
 
     private let lock = NSLock()
     /// Latest desired state per sidecar URL. Superseded jobs are dropped, not queued.
-    private var pending: [URL: Job] = [:]
+    private struct PendingWrite {
+        var job: Job
+        var waiters: [CheckedContinuation<Void, Error>] = []
+    }
+    private var pending: [URL: PendingWrite] = [:]
     /// URLs with an active drain loop.
     private var draining: Set<URL> = []
     /// Continuations waiting for all work to finish (used at termination).
@@ -61,8 +65,23 @@ public final class MetadataWriteCoordinator: @unchecked Sendable {
     /// Queues a write. Returns immediately — the caller never blocks on disk — but the job
     /// is already queued when this returns, so a subsequent `flush()` is guaranteed to see it.
     public func submit(_ job: Job) {
+        enqueue(job, waiter: nil)
+    }
+
+    /// Awaits this sidecar write (or a newer coalesced value for the same sidecar).
+    /// Errors belong to the performed write, never to an unrelated historical failure.
+    public func writeAndWait(_ job: Job) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            enqueue(job, waiter: continuation)
+        }
+    }
+
+    private func enqueue(_ job: Job, waiter: CheckedContinuation<Void, Error>?) {
         let needsDrain = lock.withLock { () -> Bool in
-            pending[job.sidecarURL] = job
+            var queued = pending[job.sidecarURL] ?? PendingWrite(job: job)
+            queued.job = job
+            if let waiter { queued.waiters.append(waiter) }
+            pending[job.sidecarURL] = queued
             guard !draining.contains(job.sidecarURL) else { return false }
             draining.insert(job.sidecarURL)
             return true
@@ -98,14 +117,18 @@ public final class MetadataWriteCoordinator: @unchecked Sendable {
 
     private func drain(_ url: URL) async {
         while true {
-            let job = lock.withLock { () -> Job? in
+            let queued = lock.withLock { () -> PendingWrite? in
                 let next = pending.removeValue(forKey: url)
                 if next == nil { draining.remove(url) }
                 return next
             }
 
-            guard let job else { break }
-            await perform(job)
+            guard let queued else { break }
+            let failure = await perform(queued.job)
+            for waiter in queued.waiters {
+                if let failure { waiter.resume(throwing: failure) }
+                else { waiter.resume() }
+            }
         }
         signalQuiescenceIfIdle()
     }
@@ -121,7 +144,7 @@ public final class MetadataWriteCoordinator: @unchecked Sendable {
     }
 
     /// Runs the actual disk work off the caller so other files keep flowing.
-    private func perform(_ job: Job) async {
+    private func perform(_ job: Job) async -> Error? {
         let sidecar = sidecarManager
         let embedded = embeddedWriter
 
@@ -150,5 +173,6 @@ public final class MetadataWriteCoordinator: @unchecked Sendable {
         if let failure {
             lock.withLock { lastError = (job.sidecarURL, failure) }
         }
+        return failure
     }
 }

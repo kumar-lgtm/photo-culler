@@ -8,6 +8,8 @@ public enum HUDMessage: Equatable {
 
 public struct HUDView: View {
     let message: HUDMessage
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     
     public var body: some View {
         VStack(spacing: 12) {
@@ -20,6 +22,8 @@ public struct HUDView: View {
                             .foregroundStyle(i <= val ? .yellow : .secondary)
                     }
                 }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(val == 0 ? "Rating cleared" : "Rated \(val) out of 5 stars")
             case .label(let text, let color):
                 HStack {
                     Circle()
@@ -35,9 +39,12 @@ public struct HUDView: View {
         }
         .padding(.horizontal, 40)
         .padding(.vertical, 24)
-        .background(.ultraThinMaterial)
+        .background {
+            if reduceTransparency { Color(NSColor.windowBackgroundColor) }
+            else { Rectangle().fill(.ultraThinMaterial) }
+        }
         .clipShape(.rect(cornerRadius: 20))
         .shadow(radius: 10)
-        .transition(.scale.combined(with: .opacity))
+        .transition(reduceMotion ? .opacity : .scale.combined(with: .opacity))
     }
 }

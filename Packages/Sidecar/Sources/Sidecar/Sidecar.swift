@@ -41,13 +41,23 @@ public struct PhotoMetadata: Equatable, Sendable {
     }
 }
 
-public enum SidecarError: Error {
+public enum SidecarError: LocalizedError {
     case fileNotFound
     case unreadable
     case writeFailed
     case invalidXML
     /// The document had no `rdf:Description` and one could not be created.
     case malformedStructure
+
+    public var errorDescription: String? {
+        switch self {
+        case .fileNotFound: "The photo or metadata file is no longer available."
+        case .unreadable: "The photo or metadata file could not be read."
+        case .writeFailed: "The metadata file could not be saved."
+        case .invalidXML: "The metadata file is not valid XMP."
+        case .malformedStructure: "The XMP file has no usable metadata container."
+        }
+    }
 }
 
 /// XMP namespace URIs. Matched by URI rather than by prefix, because the prefix a

@@ -1,0 +1,25 @@
+{
+  "name": "Photo Culler native macOS UX",
+  "platform": "macOS SwiftUI/AppKit",
+  "verification": "scripts/qa-ui.sh runs the app's own native window/action/accessibility checks and captures states for visual review; pcqa covers state/flow regressions. Browser-only product-gate is not applicable. A human VoiceOver or physical keyboard audit is not claimed.",
+  "design": {
+    "purpose": "Open a shoot, find keepers, inspect detail, and persist decisions without losing context.",
+    "appearance": "Preserve beige and standard themes; use semantic primary/secondary text, compact native controls, visible focus, and consistent functional action names.",
+    "hierarchy": "Toolbar actions; folder and progress status; image workspace; filmstrip; a scrolling inspector for photo decisions and catalog filters.",
+    "accessibility": "Named native controls, visible labels and status, non-color selection indicators, native Tab outside compare, reduced-motion support. No truncated action copy."
+  },
+  "screens": [
+    {"id":"workspace","archetype":"collection","states":["first-run","loading","empty-folder","filtered-empty","ready","folder-error","long-filename"],"recovery":"Open folder, retry folder, or clear filters as appropriate."},
+    {"id":"inspector","archetype":"single-item-detail","states":["no-selection","ready","active-filters"],"recovery":"Select a photo or reset filters. Ratings, labels and filters expose accessible names and values."},
+    {"id":"metadata-editor","archetype":"single-item-detail","states":["ready","dirty","saving","write-error","saved","cancelled"],"recovery":"Edit a local draft; Cancel discards only the draft; Save and close waits for persistence, leaves errors visible and allows retry."},
+    {"id":"ingest","archetype":"multi-step-form","states":["incomplete","ready","copying","stopped","success","partial","error"],"recovery":"Name missing configuration before start; distinguish primary/backup outcomes; Stop and Done remain available."}
+  ],
+  "flows": [
+    {"id":"filter-recovery","ladder":"filtering-items","expect":"Filtered empty differs from first run; Clear filters restores file types/rating/colors/reject visibility while preserving sort and pair preference."},
+    {"id":"metadata-save","ladder":"saving-changes","expect":"Save and close writes the captured current photo, flushes writes, and dismisses only on success; retry submits even after a failed optimistic cache update."},
+    {"id":"metadata-cancel","ladder":"saving-changes","expect":"Cancel changes neither workspace metadata nor disk."},
+    {"id":"keyboard","expect":"Tab passes to native focus outside compare, cycles panes inside compare; existing digits, navigation and text/modal exclusions remain intact."},
+    {"id":"ingest-validation","ladder":"submitting-a-form","expect":"Source and primary required; enabled backup/template/rename must be configured; destination paths must be distinct and outside the source."}
+  ],
+  "omissions": {"offline":"Local filesystem app; no network requirement.","roles":"One local user; filesystem failures use the error states.","voiceOver":"Verify native accessibility semantics; do not claim a human VoiceOver or assistive-device audit."}
+}

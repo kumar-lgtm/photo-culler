@@ -54,6 +54,7 @@ public struct RenameModal: View {
                             .font(.headline)
 
                         TextField("e.g. {seq}_{name}", text: $template)
+                            .accessibilityLabel("Rename template")
                             .textFieldStyle(.roundedBorder)
                             .font(.system(.body, design: .monospaced))
 
@@ -84,6 +85,7 @@ public struct RenameModal: View {
                         HStack {
                             Text("Start at:")
                             TextField("", value: $sequenceStart, format: .number)
+                                .accessibilityLabel("Starting sequence number")
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 80)
                         }
@@ -114,12 +116,14 @@ public struct RenameModal: View {
                                         .foregroundColor(.secondary)
                                         .lineLimit(1)
                                         .truncationMode(.middle)
+                                        .help(op.originalURL.lastPathComponent)
                                     Image(systemName: "arrow.right")
                                         .foregroundColor(.secondary)
                                     Text(op.newURL.lastPathComponent)
                                         .fontWeight(.medium)
                                         .lineLimit(1)
                                         .truncationMode(.middle)
+                                        .help(op.newURL.lastPathComponent)
                                 }
                                 // Make the paired JPEG visible so it's obvious both halves move.
                                 if let pairedOld = op.pairedOriginalURL, let pairedNew = op.pairedNewURL {

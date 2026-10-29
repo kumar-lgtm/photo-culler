@@ -13,6 +13,21 @@ public enum ViewMode: Equatable {
     case compare
 }
 
+public enum WorkspaceContentState: Equatable {
+    case welcome, loading, emptyFolder, filteredEmpty, ready
+    case folderError(String)
+}
+
+public enum MetadataSaveError: LocalizedError {
+    case noPhoto, photoUnavailable
+    public var errorDescription: String? {
+        switch self {
+        case .noPhoto: "Select a photo before saving metadata."
+        case .photoUnavailable: "This photo is no longer in the open folder. Close the editor and select it again."
+        }
+    }
+}
+
 public struct FilterSettings: Equatable {
     public var minRating: Int = 0
     public var colors: Set<ColorLabel> = []
@@ -34,12 +49,40 @@ public class WorkspaceViewModel: ObservableObject {
     @Published public var photos: [PhotoItem] = []
     @Published public var selection: Set<UUID> = []
     @Published public var currentPhotoIndex: Int?
-    @Published public var viewMode: ViewMode = .loupe
+    @Published public var viewMode: ViewMode = .loupe {
+        didSet { shortcutManager.comparePaneNavigationEnabled = viewMode == .compare }
+    }
     @Published public var activeHUD: HUDMessage?
     @Published public var gridScale: CGFloat = 160
     @Published public var gridColumnsCount: Int = 1
     @Published public var currentMetadata: PhotoMetadata = PhotoMetadata()
     @Published public var isScanning: Bool = false
+    @Published public private(set) var folderError: String?
+
+    public var contentState: WorkspaceContentState {
+        if isScanning { return .loading }
+        if let folderError { return .folderError(folderError) }
+        guard currentFolder != nil else { return .welcome }
+        if allPhotos.isEmpty { return .emptyFolder }
+        return photos.isEmpty ? .filteredEmpty : .ready
+    }
+
+    public var hasActiveFilters: Bool {
+        filtersDependOnMetadata || filterSettings.enabledFileExtensions != Set(availableFileExtensions)
+    }
+
+    public var catalogItemCount: Int {
+        allPhotos.count + (filterSettings.keepRAWAndJPEGPairsTogether ? 0 : pairedJPGItems.count)
+    }
+
+    public func clearFilters() {
+        var settings = filterSettings
+        settings.minRating = 0
+        settings.colors = []
+        settings.hideRejects = false
+        settings.enabledFileExtensions = Set(availableFileExtensions)
+        filterSettings = settings
+    }
 
     @Published public var filterSettings = FilterSettings() {
         didSet { if filterSettings != oldValue { applyFilters() } }
@@ -312,8 +355,8 @@ public class WorkspaceViewModel: ObservableObject {
 
     /// Persists whatever is currently in `currentMetadata` for the focused photo.
     ///
-    /// The Metadata Editor edits `currentMetadata` in memory; without this, navigating away
-    /// dropped every typed caption on the floor because `loadCurrentMetadata()` overwrote it.
+    /// Supports direct workspace metadata bindings. The editor uses a local draft and
+    /// `saveMetadata(_:for:)` so background focus changes cannot redirect its save.
     public func commitCurrentMetadata() {
         guard let photo = currentPhoto, canWriteMetadata(to: photo) else { return }
         let sidecarURL = metadataSidecarURL(for: photo)
@@ -334,8 +377,28 @@ public class WorkspaceViewModel: ObservableObject {
         writeCoordinator.submit(job)
     }
 
+    /// Explicit editor save always submits, including a retry after a failed write.
+    /// The sheet waits for completion before presenting success or dismissing.
+    public func saveCurrentMetadata() async throws {
+        guard let photo = currentPhoto else { throw MetadataSaveError.noPhoto }
+        try await saveMetadata(currentMetadata, for: photo)
+    }
+
+    /// The editor owns a captured photo, even if filtering changes workspace focus.
+    public func saveMetadata(_ metadata: PhotoMetadata, for photo: PhotoItem) async throws {
+        guard allKnownItems().contains(where: { $0.id == photo.id && $0.url == photo.url }),
+              canWriteMetadata(to: photo) else { throw MetadataSaveError.photoUnavailable }
+        cacheMetadata(metadata, for: photo)
+        try await writeCoordinator.writeAndWait(MetadataWriteCoordinator.Job(
+            metadata: metadata, sidecarURL: metadataSidecarURL(for: photo), imageURL: photo.url,
+            writeEmbedded: true, writeFinderTags: true
+        ))
+        if filtersDependOnMetadata { applyFilters() }
+    }
+
     /// Applies a stationery-pad template across the current selection.
-    public func applyTemplate(_ template: MetadataTemplate) {
+    @discardableResult
+    public func applyTemplate(_ template: MetadataTemplate) -> Set<URL> {
         let targets = photos.filter { selection.contains($0.id) && canWriteMetadata(to: $0) }
 
         for photo in targets {
@@ -359,6 +422,7 @@ public class WorkspaceViewModel: ObservableObject {
 
         if filtersDependOnMetadata { applyFilters() }
         showHUD(.message("Applied to \(targets.count)"))
+        return Set(targets.map { metadataSidecarURL(for: $0) })
     }
 
     /// Ensures queued writes reach disk before the app exits.
@@ -396,6 +460,7 @@ public class WorkspaceViewModel: ObservableObject {
 
         self.currentFolder = url
         self.isScanning = true
+        self.folderError = nil
         let diagStart = DispatchTime.now()
         Diag.log("openFolder: \(url.path)")
 
@@ -473,6 +538,7 @@ public class WorkspaceViewModel: ObservableObject {
             guard generation == folderGeneration else { return }
             scanTask = nil
             self.isScanning = false
+            self.folderError = error.localizedDescription
             showHUD(.message("Error: \(error.localizedDescription)"))
         }
     }
@@ -532,6 +598,8 @@ public class WorkspaceViewModel: ObservableObject {
                 return a.fileSize > b.fileSize
             }
         }
+
+        selection.formIntersection(photos.map(\.id))
 
         if let current = oldCurrentPhoto, let newIdx = self.photos.firstIndex(where: { $0.id == current.id }) {
             self.currentPhotoIndex = newIdx
@@ -668,6 +736,13 @@ public class WorkspaceViewModel: ObservableObject {
     public var currentPhoto: PhotoItem? {
         guard let index = currentPhotoIndex, index >= 0, index < photos.count else { return nil }
         return photos[index]
+    }
+
+    public func focusPhoto(_ id: UUID) {
+        guard let index = photos.firstIndex(where: { $0.id == id }) else { return }
+        currentPhotoIndex = index
+        loadCurrentMetadata()
+        prefetch()
     }
 
     private func updateSelection(for newIndex: Int, shift: Bool, command: Bool) {

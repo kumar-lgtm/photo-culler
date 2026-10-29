@@ -121,6 +121,7 @@ public struct CompareView: View {
 }
 
 struct ComparePane: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let photo: PhotoItem
     @ObservedObject var workspace: WorkspaceViewModel
     @ObservedObject var zoomState: ZoomState
@@ -134,6 +135,14 @@ struct ComparePane: View {
     @State private var faceZoomIndex: Int = 0
     @State private var faceZoomActive: Bool = false
     @State private var paneLocalOffset: CGSize = .zero
+
+    private var accessibilitySummary: String {
+        var parts = [photoReviewSummary(workspace.metadataCache[photo.id], selected: true)]
+        if isPrimary { parts.append("Focused") }
+        if let score = workspace.sharpnessCache[photo.id] { parts.append("Sharpness score \(Int(score.rounded()))") }
+        if isSharpest { parts.append("Highest sharpness score in this comparison") }
+        return parts.joined(separator: ", ")
+    }
     
     var body: some View {
         GeometryReader { proxy in
@@ -166,13 +175,7 @@ struct ComparePane: View {
                     ProgressView()
                 }
 
-                // Dim inactive panes so the active (Tab-focused) one is unmistakable
-                // among near-identical shots.
-                if !isPrimary {
-                    Color.black.opacity(0.28)
-                        .allowsHitTesting(false)
-                }
-
+                // Keep exposure unchanged across panes; the border indicates focus.
                 // Overlay: filename + rating/label + flag + sharpness
                 VStack {
                     Spacer()
@@ -256,7 +259,7 @@ struct ComparePane: View {
             }
             .onTapGesture(count: 2, coordinateSpace: .local) { location in
                 faceZoomActive = false   // manual zoom ends any face-zoom session
-                withAnimation(.spring()) {
+                withAnimation(reduceMotion ? nil : .spring()) {
                     if zoomState.scale > 1.0 {
                         zoomState.reset()
                     } else {
@@ -277,11 +280,15 @@ struct ComparePane: View {
             }
             .onTapGesture(count: 1) {
                 // Set as the "active" pane for ratings without breaking multi-selection
-                if let idx = workspace.photos.firstIndex(where: { $0.id == photo.id }) {
-                    workspace.currentPhotoIndex = idx
-                }
+                workspace.focusPhoto(photo.id)
             }
-            .task(id: photo.id) {
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Compare photo \(photo.url.lastPathComponent)")
+            .accessibilityValue(accessibilitySummary)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityHint("Focus this photo for rating and flagging")
+            .accessibilityAction { workspace.focusPhoto(photo.id) }
+            .task(id: photo) {
                 // Reload image whenever photo.id changes (task identity)
                 loadPaneImage()
             }
@@ -313,7 +320,7 @@ struct ComparePane: View {
     
     private func pan(dx: CGFloat, dy: CGFloat) {
         guard zoomState.scale > 1.0 else { return }
-        withAnimation(.easeOut(duration: 0.15)) {
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.15)) {
             zoomState.offset.width += dx
             zoomState.offset.height += dy
             zoomState.lastOffset = zoomState.offset
@@ -405,7 +412,7 @@ struct ComparePane: View {
     }
 
     private func applyFaceZoom(faces: [FaceData], cgImage: CGImage, proxy: GeometryProxy) {
-        withAnimation(.spring()) {
+        withAnimation(reduceMotion ? nil : .spring()) {
             // No faces detected → fall back to a centered punch-in so Z still does something.
             guard !faces.isEmpty else {
                 if faceZoomActive || zoomState.scale > 1.0 {

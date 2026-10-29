@@ -72,6 +72,18 @@ public let supportedMediaExtensions: Set<String> = rawExtensions
 /// and Canon/Nikon HEIF modes) never paired. HEIC/HEIF are now explicit candidates.
 public let rawPairCandidateExtensions: Set<String> = rawExtensions.union(["heic", "heif"])
 
+public enum CatalogScanError: LocalizedError {
+    case notDirectory(URL)
+    case cannotReadFolder(URL)
+
+    public var errorDescription: String? {
+        switch self {
+        case .notDirectory(let url): "“\(url.lastPathComponent)” isn’t a folder."
+        case .cannotReadFolder(let url): "“\(url.lastPathComponent)” could not be read."
+        }
+    }
+}
+
 public final class CatalogScanner: Sendable {
 
     public init() {}
@@ -88,6 +100,10 @@ public final class CatalogScanner: Sendable {
         let scanTask = Task.detached(priority: .userInitiated) { () throws -> [PhotoItem] in
             try Task.checkCancellation()
             let fileManager = FileManager.default
+            let root = try folderURL.resourceValues(forKeys: [.isDirectoryKey])
+            guard root.isDirectory == true else {
+                throw CatalogScanError.notDirectory(folderURL)
+            }
 
             struct FileInfo {
                 let url: URL
@@ -107,7 +123,7 @@ public final class CatalogScanner: Sendable {
                 includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey],
                 options: options
             ) else {
-                return []
+                throw CatalogScanError.cannotReadFolder(folderURL)
             }
 
             var scanned = 0

@@ -7,6 +7,7 @@ struct SidebarView: View {
     /// actually redraws the Recents list instead of waiting for some unrelated republish.
     @ObservedObject var folderManager: FolderManager
     @State private var searchText: String = ""
+    @State private var showKeyboardShortcuts = false
 
     private var filteredRecents: [BookmarkFolder] {
         guard !searchText.isEmpty else { return folderManager.recents }
@@ -20,7 +21,7 @@ struct SidebarView: View {
 
     var body: some View {
         List {
-            Section(workspace.isBeigeMode ? "recent spaces" : "Recent Folders") {
+            Section("Recent folders") {
                 if filteredRecents.isEmpty {
                     Text(emptyRecentsLabel)
                         .foregroundStyle(.secondary)
@@ -32,7 +33,7 @@ struct SidebarView: View {
                         Button(action: {
                             openBookmark(recent)
                         }) {
-                            Label(workspace.isBeigeMode ? recent.name.lowercased() : recent.name, systemImage: "folder")
+                            Label(recent.name, systemImage: "folder")
                         }
                         .buttonStyle(.plain)
                         .help(recent.path)
@@ -40,7 +41,7 @@ struct SidebarView: View {
                 }
             }
 
-            Section(workspace.isBeigeMode ? "curated favorites" : "Favorites") {
+            Section("Favorites") {
                 if filteredFavorites.isEmpty {
                     Text(emptyFavoritesLabel)
                         .foregroundStyle(.secondary)
@@ -52,7 +53,7 @@ struct SidebarView: View {
                         Button(action: {
                             openBookmark(fav)
                         }) {
-                            Label(workspace.isBeigeMode ? fav.name.lowercased() : fav.name, systemImage: "star")
+                            Label(fav.name, systemImage: "star")
                         }
                         .buttonStyle(.plain)
                         .help(fav.path)
@@ -60,33 +61,35 @@ struct SidebarView: View {
                 }
             }
             
-            Section(workspace.isBeigeMode ? "mindful shortcuts" : "Keyboard Shortcuts") {
+            Section {
+                DisclosureGroup("Keyboard shortcuts", isExpanded: $showKeyboardShortcuts) {
                 VStack(alignment: .leading, spacing: 6) {
-                    ShortcutRow(key: "Cmd+O", action: workspace.isBeigeMode ? "open space" : "Open Folder")
-                    ShortcutRow(key: "Cmd+R", action: workspace.isBeigeMode ? "rename aesthetics" : "Batch Rename")
-                    ShortcutRow(key: "Arrows / Space", action: workspace.isBeigeMode ? "breathe & navigate" : "Navigate")
-                    ShortcutRow(key: "Shift+C", action: workspace.isBeigeMode ? "add to moodboard" : "Add to Selection")
-                    ShortcutRow(key: "Escape", action: workspace.isBeigeMode ? "let go" : "Clear Selection")
-                    ShortcutRow(key: "1-5", action: workspace.isBeigeMode ? "curate rating" : "Rate")
-                    ShortcutRow(key: "0", action: workspace.isBeigeMode ? "clear mind" : "Clear Rating")
-                    ShortcutRow(key: "Cmd+1-8", action: workspace.isBeigeMode ? "color energy" : "Set Color")
-                    ShortcutRow(key: "`", action: workspace.isBeigeMode ? "clear energy" : "Clear Color")
-                    ShortcutRow(key: "P / X / U", action: workspace.isBeigeMode ? "keep / cut / reset" : "Pick / Reject / Unflag")
-                    ShortcutRow(key: "E/G/C", action: workspace.isBeigeMode ? "focus/grid/moodboard" : "Loupe/Grid/Compare")
-                    ShortcutRow(key: "Tab", action: workspace.isBeigeMode ? "next in moodboard" : "Cycle Compare Pane")
-                    ShortcutRow(key: "Z", action: workspace.isBeigeMode ? "focus in" : "Face Zoom")
-                    ShortcutRow(key: "F", action: workspace.isBeigeMode ? "true detail" : "100% / Fit")
-                    ShortcutRow(key: "Double Click", action: workspace.isBeigeMode ? "get closer" : "Zoom")
-                    ShortcutRow(key: "W/A/S/D", action: workspace.isBeigeMode ? "drift" : "Pan Image")
-                    ShortcutRow(key: "Cmd+I", action: workspace.isBeigeMode ? "toggle vibe check" : "Toggle Inspector")
-                    ShortcutRow(key: "Cmd+0", action: workspace.isBeigeMode ? "toggle spaces" : "Toggle Sidebar")
+                    ShortcutRow(key: "Cmd+O", action: "Open Folder")
+                    ShortcutRow(key: "Cmd+R", action: "Batch Rename")
+                    ShortcutRow(key: "Arrows / Space", action: "Navigate")
+                    ShortcutRow(key: "Shift+C", action: "Add to Selection")
+                    ShortcutRow(key: "Escape", action: "Clear Selection")
+                    ShortcutRow(key: "1-5", action: "Rate")
+                    ShortcutRow(key: "0", action: "Clear Rating")
+                    ShortcutRow(key: "Cmd+1-8", action: "Set Color")
+                    ShortcutRow(key: "`", action: "Clear Color")
+                    ShortcutRow(key: "P / X / U", action: "Pick / Reject / Unflag")
+                    ShortcutRow(key: "E/G/C", action: "Loupe/Grid/Compare")
+                    ShortcutRow(key: "Tab (Compare)", action: "Cycle compare pane")
+                    ShortcutRow(key: "Z", action: "Face Zoom")
+                    ShortcutRow(key: "F", action: "100% / Fit")
+                    ShortcutRow(key: "Double Click", action: "Zoom")
+                    ShortcutRow(key: "W/A/S/D", action: "Pan Image")
+                    ShortcutRow(key: "Cmd+I", action: "Toggle Inspector")
+                    ShortcutRow(key: "Cmd+0", action: "Toggle Sidebar")
                 }
                 .padding(.vertical, 4)
+                }
             }
             
-            Section(workspace.isBeigeMode ? "winnow" : "Filters") {
+            Section("Filters") {
                 Toggle(isOn: $workspace.filterSettings.hideRejects) {
-                    Label(workspace.isBeigeMode ? "hide rejects" : "Hide Rejects", systemImage: "flag.slash")
+                    Label("Hide rejects", systemImage: "flag.slash")
                         .font(.body)
                         .lineLimit(nil)
                         .fixedSize(horizontal: false, vertical: true)
@@ -95,15 +98,15 @@ struct SidebarView: View {
                 .help("Hide photos flagged as rejects (X) from all views.")
             }
 
-            Section(workspace.isBeigeMode ? "vibes" : "Aesthetics") {
+            Section("Appearance") {
                 Toggle(isOn: $workspace.isBeigeMode) {
-                    Label(workspace.isBeigeMode ? "minimalist luxe ✨" : "Minimalist Luxe (Beige)", systemImage: workspace.isBeigeMode ? "heart.fill" : "sparkles")
+                    Label("Beige mode", systemImage: "sparkles")
                         .font(.body)
                         .lineLimit(nil)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .toggleStyle(.switch)
-                .help("Enable clean UI, scandi-beige, tongue-in-cheek aesthetic.")
+                .help("Use a warm, light appearance.")
             }
         }
         .scrollContentBackground(workspace.isBeigeMode ? .hidden : .visible)
@@ -113,12 +116,12 @@ struct SidebarView: View {
 
     private var emptyRecentsLabel: String {
         if !searchText.isEmpty { return "No folders match “\(searchText)”" }
-        return workspace.isBeigeMode ? "no spaces yet..." : "No recent folders"
+        return "No recent folders"
     }
 
     private var emptyFavoritesLabel: String {
         if !searchText.isEmpty { return "No favorites match “\(searchText)”" }
-        return workspace.isBeigeMode ? "waiting to be curated..." : "No favorites yet"
+        return "No favorites yet"
     }
 
     private func openBookmark(_ folder: BookmarkFolder) {

@@ -9,6 +9,11 @@ struct MetadataEditorView: View {
     @State private var selectedTemplate: MetadataTemplate?
     @State private var isEditingTemplate = false
     @State private var editingTemplate = MetadataTemplate()
+    @State private var draft = PhotoMetadata()
+    @State private var editorPhoto: PhotoItem?
+    @State private var originalMetadata = PhotoMetadata()
+    @State private var isSaving = false
+    @State private var errorMessage: String?
     @Environment(\.dismiss) private var dismiss
     
     private let templateManager = TemplateManager()
@@ -19,8 +24,9 @@ struct MetadataEditorView: View {
             
             Divider()
             
-            if let photo = workspace.currentPhoto {
+            if let photo = editorPhoto {
                 currentMetadataSection(for: photo)
+                    .disabled(isSaving)
             } else {
                 ContentUnavailableView("No Photo Selected", systemImage: "photo", description: Text("Select a photo to edit its metadata."))
             }
@@ -28,11 +34,25 @@ struct MetadataEditorView: View {
             Divider()
             
             templateSection
+                .disabled(isSaving)
+
+            if let errorMessage {
+                Label(errorMessage, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.red)
+                    .font(.callout)
+                    .padding()
+            }
         }
         .frame(minWidth: 400, idealWidth: 500, minHeight: 500)
         .task {
             templates = templateManager.loadTemplates()
         }
+        .onAppear {
+            editorPhoto = workspace.currentPhoto
+            draft = workspace.currentMetadata
+            originalMetadata = draft
+        }
+        .interactiveDismissDisabled(isSaving || draft != originalMetadata)
     }
     
     // MARK: - Header
@@ -51,10 +71,18 @@ struct MetadataEditorView: View {
                     .foregroundStyle(.secondary)
             }
             
-            Button("Done") {
+            Button("Cancel") {
                 dismiss()
             }
+            .keyboardShortcut(.cancelAction)
+            .disabled(isSaving)
+
+            Button(isSaving ? "Saving…" : "Save and close") {
+                saveCurrentMetadata(closeAfterSaving: true)
+            }
             .buttonStyle(.borderedProminent)
+            .keyboardShortcut("s", modifiers: .command)
+            .disabled(isSaving || editorPhoto == nil)
             .padding(.leading, 8)
         }
         .padding()
@@ -96,7 +124,7 @@ struct MetadataEditorView: View {
                         if workspace.codeReplacementCount > 0 {
                             Text("\(workspace.codeReplacementCount) codes")
                                 .font(.caption2)
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(.secondary)
                                 .help(workspace.codeReplacementSourceURL?.lastPathComponent ?? "")
                         }
                         
@@ -107,10 +135,11 @@ struct MetadataEditorView: View {
                         .controlSize(.small)
                         
                         Button("Save", systemImage: "square.and.arrow.down") {
-                            saveCurrentMetadata()
+                            saveCurrentMetadata(closeAfterSaving: false)
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
+                        .disabled(isSaving || draft == originalMetadata)
                     }
                 }
             }
@@ -122,10 +151,11 @@ struct MetadataEditorView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
                 .font(.caption)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
             
             if axis == .vertical {
                 TextField(label, text: text, axis: .vertical)
+                    .accessibilityLabel(label)
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(3...)
                     .onChange(of: text.wrappedValue) { _, newValue in
@@ -137,6 +167,7 @@ struct MetadataEditorView: View {
                     }
             } else {
                 TextField(label, text: text)
+                    .accessibilityLabel(label)
                     .textFieldStyle(.roundedBorder)
                     .onChange(of: text.wrappedValue) { _, newValue in
                         guard expandCodes else { return }
@@ -160,7 +191,7 @@ struct MetadataEditorView: View {
                 Spacer()
                 
                 Button("New Template", systemImage: "plus") {
-                    editingTemplate = MetadataTemplate(name: "New Template", creator: workspace.currentMetadata.creator ?? "", copyright: workspace.currentMetadata.copyright ?? "")
+                    editingTemplate = MetadataTemplate(name: "New Template", creator: draft.creator ?? "", copyright: draft.copyright ?? "")
                     isEditingTemplate = true
                 }
                 .buttonStyle(.bordered)
@@ -261,43 +292,57 @@ struct MetadataEditorView: View {
     
     private var headlineBinding: Binding<String> {
         Binding(
-            get: { workspace.currentMetadata.headline ?? "" },
-            set: { workspace.currentMetadata.headline = $0.isEmpty ? nil : $0 }
+            get: { draft.headline ?? "" },
+            set: { draft.headline = $0.isEmpty ? nil : $0 }
         )
     }
     
     private var descriptionBinding: Binding<String> {
         Binding(
-            get: { workspace.currentMetadata.description ?? "" },
-            set: { workspace.currentMetadata.description = $0.isEmpty ? nil : $0 }
+            get: { draft.description ?? "" },
+            set: { draft.description = $0.isEmpty ? nil : $0 }
         )
     }
     
     private var creatorBinding: Binding<String> {
         Binding(
-            get: { workspace.currentMetadata.creator ?? "" },
-            set: { workspace.currentMetadata.creator = $0.isEmpty ? nil : $0 }
+            get: { draft.creator ?? "" },
+            set: { draft.creator = $0.isEmpty ? nil : $0 }
         )
     }
     
     private var copyrightBinding: Binding<String> {
         Binding(
-            get: { workspace.currentMetadata.copyright ?? "" },
-            set: { workspace.currentMetadata.copyright = $0.isEmpty ? nil : $0 }
+            get: { draft.copyright ?? "" },
+            set: { draft.copyright = $0.isEmpty ? nil : $0 }
         )
     }
     
     // MARK: - Actions
     
-    private func saveCurrentMetadata() {
-        // Routes through the write coordinator, and now also embeds IPTC + Finder tags —
-        // captions, creator and copyright previously reached the sidecar only, even though
-        // those are exactly the fields the embedded writer supports.
-        workspace.commitCurrentMetadata()
+    private func saveCurrentMetadata(closeAfterSaving: Bool) {
+        guard !isSaving, let photo = editorPhoto else { return }
+        isSaving = true
+        errorMessage = nil
+        let metadata = draft
+        Task {
+            defer { isSaving = false }
+            do {
+                try await workspace.saveMetadata(metadata, for: photo)
+                originalMetadata = metadata
+                if closeAfterSaving { dismiss() }
+            } catch {
+                errorMessage = "Couldn’t finish saving metadata. \(error.localizedDescription) Check folder access and try Save again."
+            }
+        }
     }
 
     private func applyTemplate(_ template: MetadataTemplate) {
-        workspace.applyTemplate(template)
+        let targets = workspace.applyTemplate(template)
+        if let editorPhoto, targets.contains(workspace.metadataSidecarURL(for: editorPhoto)) {
+            draft = template.apply(to: draft)
+            originalMetadata = template.apply(to: originalMetadata)
+        }
     }
     
     private func saveTemplate() {
@@ -327,7 +372,7 @@ struct MetadataEditorView: View {
                 // used to discard the loaded roster every single time.
                 try workspace.loadCodeReplacements(from: url)
             } catch {
-                print("Failed to load code replacements: \(error)")
+                errorMessage = "Couldn’t load this code file. \(error.localizedDescription) Choose another file."
             }
         }
     }

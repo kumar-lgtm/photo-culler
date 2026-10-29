@@ -3,6 +3,28 @@ import Catalog
 import Sidecar
 import Ingest
 
+/// The form never silently drops an enabled option when its required value is missing.
+public enum IngestSetupValidation {
+    public static func message(source: URL?, primary: URL?, secondary: URL?, useSecondary: Bool,
+                               applyTemplate: Bool, hasTemplate: Bool, useRename: Bool, renameTemplate: String) -> String? {
+        guard let source else { return "Choose a source folder to import from." }
+        guard let primary else { return "Choose a primary destination for your photos." }
+        if useSecondary && secondary == nil { return "Choose a backup destination or turn off the secondary copy." }
+        if applyTemplate && !hasTemplate { return "Choose a metadata template or turn off Apply metadata template." }
+        if useRename && renameTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Enter a rename template or turn off Rename during ingest."
+        }
+        let sourcePath = source.standardizedFileURL.resolvingSymlinksInPath().path
+        let destinations = [primary] + (useSecondary ? secondary.map { [$0] } ?? [] : [])
+        let paths = destinations.map { $0.standardizedFileURL.resolvingSymlinksInPath().path }
+        if Set(paths).count != paths.count { return "Choose different primary and backup destinations." }
+        if paths.contains(where: { $0 == sourcePath || $0.hasPrefix(sourcePath == "/" ? "/" : sourcePath + "/") }) {
+            return "Choose destinations outside the source folder so imported files aren’t scanned again."
+        }
+        return nil
+    }
+}
+
 struct IngestView: View {
     @ObservedObject var workspace: WorkspaceViewModel
     @Environment(\.dismiss) private var dismiss
@@ -13,7 +35,7 @@ struct IngestView: View {
     @State private var useSecondary = false
     @State private var applyTemplate = false
     @State private var selectedTemplate: MetadataTemplate?
-    @State private var renameTemplate: String = ""
+    @State private var renameTemplate: String = "{name}_{Sequence(0001)}"
     @State private var useRename = false
     @State private var templates: [MetadataTemplate] = []
     
@@ -43,6 +65,8 @@ struct IngestView: View {
         .task {
             templates = templateManager.loadTemplates()
         }
+        .interactiveDismissDisabled(isIngesting)
+        .onDisappear { ingestTask?.cancel() }
     }
     
     // MARK: - Header
@@ -56,7 +80,7 @@ struct IngestView: View {
 
             // A 128GB card import used to be unstoppable: the button was hidden while
             // ingesting and the sheet could not be dismissed.
-            Button(isIngesting ? "Stop Ingest" : "Cancel") {
+            Button(isIngesting ? "Stop ingest" : "Close") {
                 if isIngesting {
                     ingestTask?.cancel()
                 } else {
@@ -133,18 +157,26 @@ struct IngestView: View {
                     
                     if useRename {
                         VStack(alignment: .leading, spacing: 4) {
+                            Text("Rename template").font(.callout.weight(.medium))
                             TextField("Rename template", text: $renameTemplate)
                                 .textFieldStyle(.roundedBorder)
+                                .accessibilityLabel("Ingest rename template")
                             
                             Text("Tokens: {Date(yyyyMMdd)}, {Sequence(001)}, {name}, {camera}, {year}, {ext}")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 } header: {
                     Text("Renaming")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.secondary)
+                }
+
+                if let validationMessage {
+                    Label(validationMessage, systemImage: "info.circle")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("ingest-setup-guidance")
                 }
                 
                 Divider()
@@ -183,18 +215,17 @@ struct IngestView: View {
             Image(systemName: systemImage)
                 .foregroundStyle(.secondary)
             
-            if let selected = url.wrappedValue {
-                Text(selected.lastPathComponent)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            } else {
-                Text(label)
-                    .foregroundStyle(.tertiary)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(label).font(.callout.weight(.medium))
+                Text(url.wrappedValue?.path ?? "No folder chosen")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .lineLimit(2).truncationMode(.middle)
+                    .help(url.wrappedValue?.path ?? label)
             }
             
             Spacer()
             
-            Button("Browse") {
+            Button("Choose…") {
                 let panel = NSOpenPanel()
                 panel.canChooseDirectories = true
                 panel.canChooseFiles = false
@@ -207,6 +238,7 @@ struct IngestView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+            .accessibilityLabel("Choose \(label)")
         }
         .padding(8)
         .background(.fill.quaternary)
@@ -235,7 +267,7 @@ struct IngestView: View {
             if let p = progress {
                 Text(formatBytes(p.bytesCopied) + " / " + formatBytes(p.bytesTotal))
                     .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
             }
             
             Spacer()
@@ -255,13 +287,15 @@ struct IngestView: View {
                 .font(.system(size: 48))
                 .foregroundStyle(hadProblems ? .orange : .green)
 
-            Text(result.wasCancelled ? "Ingest Stopped" : "Ingest Complete")
+            Text(result.wasCancelled ? "Ingest stopped" : (hadProblems ? "Ingest needs attention" : (result.destinationReports.isEmpty ? "No supported files found" : "Ingest complete")))
                 .font(.title2.weight(.semibold))
             
             VStack(spacing: 6) {
                 // Per-destination, so an incomplete backup is visible instead of inferred
                 // from the primary's numbers.
                 ForEach(Array(result.destinationReports.enumerated()), id: \.offset) { index, report in
+                    Text(report.destination.path).font(.caption).foregroundStyle(.secondary)
+                        .textSelection(.enabled)
                     HStack(spacing: 6) {
                         Text(index == 0 ? "Primary" : "Backup")
                             .font(.caption.weight(.semibold))
@@ -281,11 +315,19 @@ struct IngestView: View {
 
                 Text("\(formatBytes(result.totalBytes)) in \(String(format: "%.1f", result.duration))s")
                     .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
                     .padding(.top, 4)
             }
             
             Spacer()
+
+            if let primary = primaryDestURL, !result.copiedFiles.isEmpty || !result.skippedFiles.isEmpty {
+                Button("Open imported folder") {
+                    dismiss()
+                    Task { await workspace.openFolder(primary) }
+                }
+                .buttonStyle(.bordered)
+            }
             
             Button("Done") {
                 dismiss()
@@ -300,11 +342,17 @@ struct IngestView: View {
     // MARK: - Actions
     
     private var canStartIngest: Bool {
-        sourceURL != nil && primaryDestURL != nil
+        validationMessage == nil
+    }
+
+    private var validationMessage: String? {
+        IngestSetupValidation.message(source: sourceURL, primary: primaryDestURL, secondary: secondaryDestURL,
+                                      useSecondary: useSecondary, applyTemplate: applyTemplate,
+                                      hasTemplate: selectedTemplate != nil, useRename: useRename, renameTemplate: renameTemplate)
     }
     
     private func startIngest() {
-        guard let source = sourceURL, let primary = primaryDestURL else { return }
+        guard canStartIngest, let source = sourceURL, let primary = primaryDestURL else { return }
         
         errorMessage = nil
         isIngesting = true

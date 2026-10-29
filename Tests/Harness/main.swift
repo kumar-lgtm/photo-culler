@@ -11,8 +11,8 @@ setvbuf(stdout, nil, _IOLBF, 0)
 // Runs without XCTest (and therefore without a full Xcode install):
 //     swift run pcqa
 //
-// The UI package isn't covered here — it needs a running app — but every module that
-// touches the user's files is.
+// Workspace state and flow logic are covered here. Rendered native controls are checked
+// separately by scripts/qa-ui.sh in an isolated debug app.
 
 // `--bench` measures instead of asserting; see Benchmarks.swift.
 if CommandLine.arguments.contains("--bench-metadata") {
@@ -73,6 +73,7 @@ do {
     try await CatalogSuite.run(runner)
     try await IngestSuite.run(runner)
     try await WorkspaceSuite.run(runner)
+    try await UXSuite.run(runner)
 } catch {
     runner.fail("suite threw an unexpected error: \(error)")
 }

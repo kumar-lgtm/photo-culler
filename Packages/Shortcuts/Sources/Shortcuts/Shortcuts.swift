@@ -58,6 +58,7 @@ private enum KeyCode {
 
 public final class ShortcutManager: @unchecked Sendable {
     public let actionPublisher = PassthroughSubject<ShortcutAction, Never>()
+    @MainActor public var comparePaneNavigationEnabled = false
     private var monitor: Any?
 
     @MainActor
@@ -98,6 +99,7 @@ public final class ShortcutManager: @unchecked Sendable {
         if window.attachedSheet != nil { return false }
 
         if let responder = window.firstResponder {
+            if responder is NSControl { return false }
             if responder is NSText { return false }
             // SwiftUI text entry does not always vend an NSText field editor.
             if responder.isKind(of: NSTextView.self) { return false }
@@ -106,7 +108,9 @@ public final class ShortcutManager: @unchecked Sendable {
         return true
     }
 
-    private func action(for event: NSEvent) -> ShortcutAction? {
+    /// Resolves only shortcuts owned by the culling workspace. Nil leaves native
+    /// keyboard focus and controls free to handle the event.
+    @MainActor public func action(for event: NSEvent) -> ShortcutAction? {
         let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let cmd = mods.contains(.command)
         let shift = mods.contains(.shift)
@@ -124,7 +128,8 @@ public final class ShortcutManager: @unchecked Sendable {
         case KeyCode.upArrow:    return .navigateUp(shift: shift, command: cmd)
         case KeyCode.space:      return .navigateNext(shift: false, command: false)
         case KeyCode.escape:     return .clearSelection
-        case KeyCode.tab:        return .cycleComparePane(forward: !shift)
+        case KeyCode.tab:
+            return !cmd && comparePaneNavigationEnabled ? .cycleComparePane(forward: !shift) : nil
         default: break
         }
 

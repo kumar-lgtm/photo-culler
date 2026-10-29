@@ -9,161 +9,135 @@ struct InspectorView: View {
     var body: some View {
         List {
             if let photo = workspace.currentPhoto {
-                Section(workspace.isBeigeMode ? "energy histogram" : "Histogram") {
+                Section("Photo information") {
+                    LabeledContent("File", value: photo.url.lastPathComponent)
+                        .textSelection(.enabled)
+                    LabeledContent("Size", value: formatSize(photo.fileSize))
+                    LabeledContent("Modified", value: formatDate(photo.modificationDate))
                     HistogramView(photo: photo, workspace: workspace)
-                        .frame(height: 60)
-                        .padding(.vertical, 4)
+                        .frame(height: 60).padding(.vertical, 4)
+                        .accessibilityLabel("Image brightness histogram")
                 }
-                
-                Section(workspace.isBeigeMode ? "metadata vibes" : "Information") {
-                    LabeledContent(workspace.isBeigeMode ? "file" : "File", value: workspace.isBeigeMode ? photo.url.lastPathComponent.lowercased() : photo.url.lastPathComponent)
-                    LabeledContent(workspace.isBeigeMode ? "size" : "Size", value: formatSize(photo.fileSize))
-                    LabeledContent(workspace.isBeigeMode ? "modified" : "Modified", value: formatDate(photo.modificationDate))
-                }
-
-                Section(workspace.isBeigeMode ? "curation & energy" : "Rating & Color") {
+                Section("Review photo") {
                     if workspace.canWriteMetadata(to: photo) {
                         HStack {
-                            Text(workspace.isBeigeMode ? "stars" : "Rating")
+                            Text("Rating")
                             Spacer()
-                            EditableRatingView(rating: workspace.currentMetadata.rating) { newRating in
-                                workspace.applyRating(newRating)
-                            }
+                            EditableRatingView(rating: workspace.currentMetadata.rating, onChange: workspace.applyRating)
                         }
-
+                        .accessibilityElement(children: .contain)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Color label")
+                            EditableColorView(currentLabel: workspace.currentMetadata.label, onChange: workspace.applyColorLabel)
+                        }
+                        .accessibilityElement(children: .contain)
                         HStack {
-                            Text(workspace.isBeigeMode ? "aura" : "Color")
-                            Spacer()
-                            EditableColorView(currentLabel: workspace.currentMetadata.label) { index in
-                                workspace.applyColorLabel(index: index)
-                            }
-                        }
-                    } else {
-                        LabeledContent(workspace.isBeigeMode ? "metadata" : "Metadata", value: workspace.isBeigeMode ? "read-only vibes" : "Read-only sidecar")
+                            Button("Pick", systemImage: "flag") { workspace.applyFlag(.pick) }.help("Pick photo (P)")
+                            Button("Reject", systemImage: "flag.slash") { workspace.applyFlag(.reject) }.help("Reject photo (X)")
+                            Button("Unflag") { workspace.applyFlag(.none) }
+                                .disabled(workspace.currentMetadata.flag == .none).help("Clear flag (U)")
+                        }.controlSize(.small)
+                        .accessibilityElement(children: .contain)
+                        Text(workspace.currentMetadata.flag == .none ? "Unflagged" : (workspace.currentMetadata.flag == .pick ? "Picked" : "Rejected"))
+                            .font(.callout).foregroundStyle(.secondary)
                     }
                 }
             } else {
-                Text(workspace.isBeigeMode ? "awaiting focus..." : "No photo selected")
-                    .foregroundStyle(.secondary)
-                    .font(workspace.isBeigeMode ? .caption.italic() : .body)
+                Text("Select a photo to inspect it.").foregroundStyle(.secondary)
+            }
+            Section("Culling") {
+                Toggle("Auto-advance after tagging", isOn: $workspace.autoAdvance)
+                Picker("Sort by", selection: $workspace.sortOption) {
+                    ForEach(SortOption.allCases) { Text($0.rawValue).tag($0) }
+                }.pickerStyle(.menu)
+            }
+            Section {
+                filterSection
+            } header: {
+                HStack {
+                    Text("Filters")
+                    Spacer()
+                    Button("Clear", action: workspace.clearFilters)
+                        .accessibilityLabel("Clear all photo filters")
+                        .disabled(!workspace.hasActiveFilters)
+                }
             }
         }
         .scrollContentBackground(workspace.isBeigeMode ? .hidden : .visible)
         .background(workspace.isBeigeMode ? Color(red: 0.96, green: 0.94, blue: 0.91) : .clear)
-        .navigationTitle(workspace.isBeigeMode ? "vibes inspector" : "Inspector")
-        .safeAreaInset(edge: .bottom) {
-            filterSection
-                .padding()
-                .background(.regularMaterial)
-        }
+        .navigationTitle("Inspector")
     }
-    
+
     private var filterSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Settings & Filters").font(.headline)
-            
-            Toggle("Auto-advance after tagging", isOn: $workspace.autoAdvance)
-            
-            Picker("Sort By", selection: $workspace.sortOption) {
-                ForEach(SortOption.allCases) { opt in
-                    Text(opt.rawValue).tag(opt)
-                }
-            }
-            .pickerStyle(.menu)
-            
-            Divider()
-            
+        VStack(alignment: .leading, spacing: 16) {
+            Toggle("Hide rejects", isOn: $workspace.filterSettings.hideRejects)
             VStack(alignment: .leading, spacing: 8) {
-                Text("File Types:")
-                    .font(.subheadline.weight(.semibold))
-
+                Text("File types").font(.subheadline.weight(.semibold))
                 if workspace.availableFileExtensions.isEmpty {
-                    Text("Open a folder to see file types")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Text("Open a folder to see file types.").font(.callout).foregroundStyle(.secondary)
                 } else {
-                    HStack(spacing: 8) {
-                        Button("All") {
-                            workspace.selectAllFileExtensions()
-                        }
-                        .controlSize(.small)
-
-                        Button("None") {
-                            workspace.clearFileExtensions()
-                        }
-                        .controlSize(.small)
-                    }
-
-                    ScrollView(.vertical, showsIndicators: true) {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), alignment: .leading)], alignment: .leading, spacing: 6) {
-                            ForEach(workspace.availableFileExtensions, id: \.self) { ext in
-                                Toggle(isOn: fileExtensionBinding(ext)) {
-                                    HStack(spacing: 4) {
-                                        Text(ext.uppercased())
-                                            .font(.system(size: 11, weight: .semibold, design: .rounded))
-                                        Text("\(fileExtensionCount(ext))")
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                                .toggleStyle(.checkbox)
-                                .help("Show .\(ext) files")
+                    HStack {
+                        Button("All types", action: workspace.selectAllFileExtensions)
+                        Button("No types", action: workspace.clearFileExtensions)
+                    }.controlSize(.small)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), alignment: .leading)], alignment: .leading, spacing: 8) {
+                        ForEach(workspace.availableFileExtensions, id: \.self) { ext in
+                            Toggle(isOn: fileExtensionBinding(ext)) {
+                                Text("\(ext.uppercased()) (\(fileExtensionCount(ext)))").font(.callout)
                             }
+                            .toggleStyle(.checkbox)
+                            .accessibilityLabel("Show \(ext.uppercased()) files")
+                            .help("\(fileExtensionCount(ext)) \(ext.uppercased()) files in this folder")
                         }
-                        .padding(.vertical, 2)
                     }
-                    .frame(maxHeight: 120)
                 }
-
-                if workspace.pairedJPGItems.count > 0 {
+                if !workspace.pairedJPGItems.isEmpty {
                     Toggle("Keep RAW + JPEG pairs together", isOn: $workspace.filterSettings.keepRAWAndJPEGPairsTogether)
                         .toggleStyle(.checkbox)
-                        .help("When both RAW and JPEG are enabled, show matching pairs as one culling item. Turn this off to show the RAW and JPEG as separate items.")
+                        .help("Matching RAW and JPEG files appear as one photo when both types are shown.")
                 }
             }
-            
-            HStack {
-                Text("Min Rating:")
-                Spacer()
+            VStack(alignment: .leading, spacing: 8) {
+                Text(workspace.filterSettings.minRating == 0 ? "Any rating" : "At least \(workspace.filterSettings.minRating) stars")
+                    .font(.subheadline.weight(.semibold))
                 HStack(spacing: 4) {
                     ForEach(0...5, id: \.self) { rating in
-                        Button {
-                            workspace.filterSettings.minRating = rating
-                        } label: {
-                            Image(systemName: rating == 0 ? "xmark.circle" : (rating <= workspace.filterSettings.minRating ? "star.fill" : "star"))
-                                .foregroundColor(rating <= workspace.filterSettings.minRating && rating > 0 ? .yellow : .secondary)
+                        Button { workspace.filterSettings.minRating = rating } label: {
+                            Image(systemName: rating == 0 ? "line.3.horizontal.decrease.circle" : (rating <= workspace.filterSettings.minRating ? "star.fill" : "star"))
+                                .foregroundStyle(rating > 0 && rating <= workspace.filterSettings.minRating ? Color.accentColor : .secondary)
+                                .frame(width: 26, height: 28)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel(rating == 0 ? "Show all ratings" : "Show photos rated at least \(rating) stars")
+                        .accessibilityValue(workspace.filterSettings.minRating == rating ? "Selected" : "Not selected")
+                        .help(rating == 0 ? "Show all ratings" : "At least \(rating) stars")
                     }
                 }
             }
-            
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Color Labels:")
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach([ColorLabel.red, .yellow, .green, .blue, .purple, .orange, .cyan, .magenta], id: \.self) { label in
-                            Circle()
-                                .fill(color(for: label))
-                                .frame(width: 20, height: 20)
-                                .overlay(
-                                    Circle().stroke(Color.primary, lineWidth: workspace.filterSettings.colors.contains(label) ? 2 : 0)
-                                )
-                                .onTapGesture {
-                                    if workspace.filterSettings.colors.contains(label) {
-                                        workspace.filterSettings.colors.remove(label)
-                                    } else {
-                                        workspace.filterSettings.colors.insert(label)
-                                    }
-                                }
-                        }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Color filters").font(.subheadline.weight(.semibold))
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), alignment: .leading)], alignment: .leading, spacing: 8) {
+                    ForEach([ColorLabel.red, .yellow, .green, .blue, .purple, .orange, .cyan, .magenta], id: \.self) { label in
+                        Toggle(label.rawValue, isOn: Binding(
+                            get: { workspace.filterSettings.colors.contains(label) },
+                            set: { enabled in
+                                if enabled { workspace.filterSettings.colors.insert(label) }
+                                else { workspace.filterSettings.colors.remove(label) }
+                            }
+                        ))
+                        .toggleStyle(.checkbox)
+                        .accessibilityLabel("Filter by \(label.rawValue)")
                     }
-                    .padding(.vertical, 4)
                 }
+                Text(workspace.filterSettings.colors.isEmpty ? "All colors" : workspace.filterSettings.colors.map(\.rawValue).sorted().joined(separator: ", "))
+                    .font(.callout).foregroundStyle(.secondary)
             }
         }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Photo filters")
     }
-    
+
     private func formatSize(_ bytes: Int64) -> String {
         let formatter = ByteCountFormatter()
         formatter.allowedUnits = [.useMB, .useGB]
@@ -216,23 +190,27 @@ struct RatingView: View {
                     .foregroundColor(index <= rating ? .yellow : .secondary.opacity(0.5))
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Photo star rating")
     }
 }
 
 struct EditableRatingView: View {
     let rating: Int
     let onChange: (Int) -> Void
-    
+
     var body: some View {
         HStack(spacing: 2) {
             ForEach(1...5, id: \.self) { index in
-                Button {
-                    onChange(index == rating ? 0 : index)
-                } label: {
+                Button { onChange(index == rating ? 0 : index) } label: {
                     Image(systemName: index <= rating ? "star.fill" : "star")
-                        .foregroundColor(index <= rating ? .yellow : .secondary.opacity(0.5))
+                        .foregroundStyle(index <= rating ? Color.accentColor : .secondary)
+                        .frame(width: 24, height: 28)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.borderless)
+                .accessibilityLabel(index == rating ? "Clear photo rating" : "Rate photo \(index) stars")
+                .accessibilityValue("Current rating: \(rating) out of 5")
+                .help(index == rating ? "Clear rating (0)" : "Rate \(index) stars (\(index))")
             }
         }
     }
@@ -241,38 +219,22 @@ struct EditableRatingView: View {
 struct EditableColorView: View {
     let currentLabel: ColorLabel
     let onChange: (Int) -> Void
-    
-    private let labels: [(ColorLabel, Int, Color, String)] = [
-        (.red, 1, .red, "Red"), (.yellow, 2, .yellow, "Yellow"), (.green, 3, .green, "Green"),
-        (.blue, 4, .blue, "Blue"), (.purple, 5, .purple, "Purple"), (.orange, 6, .orange, "Orange"),
-        (.cyan, 7, .cyan, "Cyan"), (.magenta, 8, .pink, "Magenta")
-    ]
-    
+    private let labels: [ColorLabel] = [.red, .yellow, .green, .blue, .purple, .orange, .cyan, .magenta]
+
     var body: some View {
-        VStack(alignment: .trailing, spacing: 4) {
-            HStack(spacing: 6) {
-                ForEach(labels, id: \.1) { label, index, color, _ in
-                    Circle()
-                        .fill(color)
-                        .frame(width: 14, height: 14)
-                        .overlay(
-                            Circle().stroke(Color.primary, lineWidth: currentLabel == label ? 2 : 0)
-                        )
-                        .scaleEffect(currentLabel == label ? 1.25 : 1.0)
-                        .animation(.easeInOut(duration: 0.15), value: currentLabel)
-                        .onTapGesture {
-                            onChange(currentLabel == label ? 0 : index)
-                        }
-                }
-            }
-            
-            if let active = labels.first(where: { $0.0 == currentLabel }) {
-                Text(active.3)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(active.2)
-            }
+        Picker("", selection: Binding(
+            get: { currentLabel },
+            set: { label in onChange(labels.firstIndex(of: label).map { $0 + 1 } ?? 0) }
+        )) {
+            Text("No label").tag(ColorLabel.none)
+            ForEach(labels, id: \.self) { label in Text(label.rawValue).tag(label) }
         }
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .accessibilityLabel("Photo color label")
+        .accessibilityValue(currentLabel == .none ? "No label" : currentLabel.rawValue)
     }
+
 }
 
 struct HistogramView: View {

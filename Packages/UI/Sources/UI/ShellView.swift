@@ -39,17 +39,20 @@ public struct ShellView: View {
             ToolbarItem(placement: .principal) {
                 HStack(spacing: 20) {
                     Picker("View Mode", selection: $workspace.viewMode) {
-                        Image(systemName: "rectangle.grid.1x2.fill").tag(ViewMode.loupe)
-                        Image(systemName: "rectangle.split.2x1.fill").tag(ViewMode.compare)
-                        Image(systemName: "square.grid.3x2.fill").tag(ViewMode.grid)
+                        Text("Loupe").tag(ViewMode.loupe)
+                        Text("Compare").tag(ViewMode.compare)
+                        Text("Grid").tag(ViewMode.grid)
                     }
                     .pickerStyle(.segmented)
+                    .help("Loupe (E), compare selected photos (C), or grid (G)")
                     
                     if workspace.viewMode == .grid {
                         HStack {
                             Image(systemName: "square.grid.2x2")
                             Slider(value: $workspace.gridScale, in: 80...400)
                                 .frame(width: 100)
+                                .accessibilityLabel("Thumbnail size")
+                                .accessibilityValue("\(Int(workspace.gridScale)) points")
                             Image(systemName: "square.grid.3x3")
                         }
                         .controlSize(.small)
@@ -62,6 +65,8 @@ public struct ShellView: View {
                     showMetadataEditor = true
                 }
                 .labelStyle(.iconOnly)
+                .help(workspace.currentPhoto == nil ? "Select a photo to edit its metadata" : "Edit metadata")
+                .disabled(workspace.currentPhoto == nil)
             }
             
             ToolbarItem(placement: .primaryAction) {
@@ -69,6 +74,7 @@ public struct ShellView: View {
                     showIngestView = true
                 }
                 .labelStyle(.iconOnly)
+                .help("Copy photos from a card to working and backup folders")
             }
             
             ToolbarItem(placement: .primaryAction) {
@@ -76,6 +82,8 @@ public struct ShellView: View {
                     showRenameModal = true
                 }
                 .labelStyle(.iconOnly)
+                .help(workspace.renamableSelection().isEmpty ? "Select photos to rename" : "Rename selected photos (⌘R)")
+                .disabled(workspace.renamableSelection().isEmpty)
             }
         }
         .sheet(isPresented: $showRenameModal) {
@@ -91,6 +99,7 @@ public struct ShellView: View {
         .overlay {
             if let hud = workspace.activeHUD {
                 HUDView(message: hud)
+                    .allowsHitTesting(false)
                     .zIndex(100)
             }
         }
@@ -99,7 +108,7 @@ public struct ShellView: View {
             case .openFolder:
                 openFolderPanel()
             case .openRenameModal:
-                showRenameModal = true
+                if !workspace.renamableSelection().isEmpty { showRenameModal = true }
             case .toggleSidebar:
                 columnVisibility = (columnVisibility == .detailOnly) ? .all : .detailOnly
             case .toggleInspector:
@@ -108,7 +117,7 @@ public struct ShellView: View {
                 break
             }
         }
-        .tint(workspace.isBeigeMode ? Color(red: 0.65, green: 0.55, blue: 0.45) : nil)
+        .tint(workspace.isBeigeMode ? Color(red: 0.38, green: 0.29, blue: 0.22) : nil)
         .preferredColorScheme(workspace.isBeigeMode ? .light : nil)
         .fontDesign(workspace.isBeigeMode ? .serif : .default)
         .task {

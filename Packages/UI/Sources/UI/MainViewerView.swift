@@ -24,93 +24,105 @@ struct MainViewerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Main Content Area
-            ZStack {
-                if workspace.isBeigeMode {
-                    Color(red: 0.96, green: 0.94, blue: 0.91)
-                } else {
-                    Color(NSColor.underPageBackgroundColor)
-                }
-
-                if workspace.isScanning && workspace.photos.isEmpty {
-                    VStack(spacing: 14) {
-                        ProgressView()
-                        Text(workspace.isBeigeMode ? "gathering your images..." : "Scanning folder…")
-                            .foregroundStyle(.secondary)
+            if let folder = workspace.currentFolder {
+                HStack(spacing: 12) {
+                    Image(systemName: "folder").accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(folder.lastPathComponent).font(.headline).lineLimit(1).help(folder.path)
+                        Text(workspace.isScanning ? "Scanning folder…" : "Showing \(workspace.photos.count) of \(workspace.catalogItemCount) photos")
+                            .font(.callout).foregroundStyle(.secondary)
                     }
-                } else if workspace.photos.isEmpty {
-                    emptyState
-                } else {
+                    .accessibilityElement(children: .combine)
+                    Spacer(minLength: 8)
+                    if workspace.hasActiveFilters {
+                        Button("Clear filters", action: workspace.clearFilters)
+                            .controlSize(.small)
+                    }
+                    if let index = workspace.currentPhotoIndex {
+                        Text("Photo \(index + 1) of \(workspace.photos.count)")
+                            .font(.callout).monospacedDigit()
+                            .accessibilityLabel("Current photo \(index + 1) of \(workspace.photos.count)")
+                    }
+                    if workspace.selection.count > 1 {
+                        Text("\(workspace.selection.count) selected").font(.callout)
+                    }
+                }
+                .padding(.horizontal, 16).padding(.vertical, 12)
+                .background(workspace.isBeigeMode ? Color(red: 0.94, green: 0.92, blue: 0.88) : Color(NSColor.windowBackgroundColor))
+                .accessibilityIdentifier("workspace-status")
+                Divider()
+            }
+
+            ZStack {
+                (workspace.isBeigeMode ? Color(red: 0.96, green: 0.94, blue: 0.91) : Color(NSColor.underPageBackgroundColor))
+                switch workspace.contentState {
+                case .loading:
+                    VStack(spacing: 12) {
+                        ProgressView("Scanning photos…")
+                        Text("You can open another folder while this scan finishes.")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
+                case .ready:
                     switch workspace.viewMode {
-                    case .loupe:
-                        LoupeView(workspace: workspace)
+                    case .loupe: LoupeView(workspace: workspace)
                     case .grid:
-                        GeometryReader { proxy in
-                            GridView(workspace: workspace, width: proxy.size.width)
+                        GeometryReader { proxy in GridView(workspace: workspace, width: proxy.size.width) }
+                    case .compare: CompareView(workspace: workspace)
+                    }
+                case .welcome:
+                    statePanel(title: "Find the photos worth keeping", detail: "Open a shoot to rate, flag and compare your photos. Your decisions stay with the files.", symbol: "photo.on.rectangle.angled") {
+                        Button("Open folder…", systemImage: "folder.badge.plus", action: openFolder)
+                            .buttonStyle(.borderedProminent).controlSize(.large)
+                        VStack(spacing: 8) {
+                            ShortcutRow(key: "← / →", action: "Navigate photos")
+                            ShortcutRow(key: "1–5", action: "Set a star rating")
+                            ShortcutRow(key: "P / X", action: "Pick or reject")
+                        }.padding(.top, 12)
+                    }
+                case .filteredEmpty:
+                    statePanel(title: "No photos match these filters", detail: "Your photos are still in this folder. Clear the filters to show them again.", symbol: "line.3.horizontal.decrease.circle") {
+                        Button("Clear filters", action: workspace.clearFilters).buttonStyle(.borderedProminent)
+                    }
+                    .accessibilityIdentifier("filtered-empty-state")
+                case .emptyFolder:
+                    statePanel(title: "No supported photos in this folder", detail: "Choose a folder with RAW, JPEG, HEIC, PNG, TIFF or supported video files. Subfolders are included.", symbol: "folder") {
+                        Button("Choose another folder…", action: openFolder).buttonStyle(.borderedProminent)
+                    }
+                case .folderError(let reason):
+                    statePanel(title: "Couldn’t open this folder", detail: reason + " Check that the folder is available and that Photo Culler can read it.", symbol: "exclamationmark.folder") {
+                        HStack {
+                            Button("Try again") {
+                                if let folder = workspace.currentFolder { Task { await workspace.openFolder(folder) } }
+                            }.buttonStyle(.borderedProminent)
+                            Button("Choose another folder…", action: openFolder)
                         }
-                    case .compare:
-                        CompareView(workspace: workspace)
                     }
                 }
             }
-
-            Divider()
-
-            // Filmstrip (always visible)
-            FilmstripView(workspace: workspace)
-                .frame(height: 120)
-                .background(workspace.isBeigeMode ? Color(red: 0.94, green: 0.92, blue: 0.88) : Color(NSColor.windowBackgroundColor))
+            if !workspace.photos.isEmpty {
+                Divider()
+                FilmstripView(workspace: workspace)
+                    .frame(height: 120)
+                    .background(workspace.isBeigeMode ? Color(red: 0.94, green: 0.92, blue: 0.88) : Color(NSColor.windowBackgroundColor))
+            }
         }
     }
 
-    private var emptyState: some View {
-        VStack(spacing: 24) {
-            Image(systemName: workspace.isBeigeMode ? "sparkles" : "photo.on.rectangle.angled")
-                .font(.system(size: 80))
-                .foregroundStyle(workspace.isBeigeMode ? AnyShapeStyle(Color(red: 0.8, green: 0.7, blue: 0.6)) : AnyShapeStyle(.tertiary))
+    private func openFolder() { workspace.shortcutManager.actionPublisher.send(.openFolder) }
 
-            VStack(spacing: 8) {
-                Text(workspace.isBeigeMode ? "welcome to photo culler ✨" : "Welcome to Photo Culler")
-                    .font(workspace.isBeigeMode ? .custom("Times", size: 36).italic() : .largeTitle)
-                    .fontWeight(.bold)
-                Text(workspace.isBeigeMode ? "mindful, slow, intentional photo selection." : "Fast, focused photo culling and selection.")
-                    .font(workspace.isBeigeMode ? .title3.italic() : .title3)
-                    .foregroundStyle(workspace.isBeigeMode ? Color(red: 0.5, green: 0.45, blue: 0.4) : .secondary)
-            }
-
-            Button {
-                workspace.shortcutManager.actionPublisher.send(.openFolder)
-            } label: {
-                Label(workspace.isBeigeMode ? "open a folder..." : "Open Folder...", systemImage: workspace.isBeigeMode ? "heart.fill" : "folder.badge.plus")
-                    .font(.headline)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-
-            VStack(alignment: .leading, spacing: 12) {
-                Text(workspace.isBeigeMode ? "mindful tips:" : "Quick Tips:")
-                    .font(.headline)
-                    .foregroundStyle(workspace.isBeigeMode ? Color(red: 0.5, green: 0.45, blue: 0.4) : .secondary)
-                    .padding(.top, 16)
-
-                ShortcutRow(key: "← / →", action: workspace.isBeigeMode ? "breathe & navigate" : "Navigate photos")
-                ShortcutRow(key: "1-5", action: workspace.isBeigeMode ? "curate rating" : "Rate photo")
-                ShortcutRow(key: "⇧C", action: workspace.isBeigeMode ? "add to moodboard" : "Add to selection & advance")
-                ShortcutRow(key: "C", action: workspace.isBeigeMode ? "compare aesthetics" : "Compare selected")
-                ShortcutRow(key: "Esc", action: workspace.isBeigeMode ? "let go (clear)" : "Clear selection")
-            }
-            .padding(24)
-            .background(workspace.isBeigeMode ? AnyShapeStyle(Color.white.opacity(0.4)) : AnyShapeStyle(.regularMaterial))
-            .clipShape(RoundedRectangle(cornerRadius: workspace.isBeigeMode ? 24 : 12, style: .continuous))
-            .shadow(color: workspace.isBeigeMode ? Color(red: 0.6, green: 0.5, blue: 0.4).opacity(0.15) : .black.opacity(0.1), radius: 15, y: 8)
+    private func statePanel<Actions: View>(title: String, detail: String, symbol: String, @ViewBuilder actions: () -> Actions) -> some View {
+        VStack(spacing: 16) {
+            Image(systemName: symbol).font(.system(size: 40)).foregroundStyle(.secondary).accessibilityHidden(true)
+            Text(title).font(.title2.weight(.semibold)).multilineTextAlignment(.center)
+            Text(detail).font(.body).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            actions()
         }
-        .padding()
+        .frame(maxWidth: 420).padding(32)
     }
 }
 
 struct LoupeView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var workspace: WorkspaceViewModel
     @State private var currentImage: CGImage?
     @State private var imageLoadFinished: Bool = false
@@ -194,7 +206,7 @@ struct LoupeView: View {
             )
             .onTapGesture(count: 2, coordinateSpace: .local) { location in
                 faceZoomActive = false   // manual zoom ends any face-zoom session
-                withAnimation(.spring()) {
+                withAnimation(reduceMotion ? nil : .spring()) {
                     if zoomState.scale > 1.0 {
                         zoomState.reset()
                     } else {
@@ -215,7 +227,7 @@ struct LoupeView: View {
             }
             // Keyed on identity, not index: re-sorting or filtering can put a *different*
             // photo at the same index, which used to leave the previous image on screen.
-            .onChange(of: workspace.currentPhoto?.id) { _, _ in
+            .onChange(of: workspace.currentPhoto) { _, _ in
                 zoomState.reset()
                 faceZoomActive = false
                 loadImage(viewSize: proxy.size)
@@ -254,7 +266,7 @@ struct LoupeView: View {
 
     private func pan(dx: CGFloat, dy: CGFloat) {
         guard zoomState.scale > 1.0 else { return }
-        withAnimation(.easeOut(duration: 0.15)) {
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.15)) {
             zoomState.offset.width += dx
             zoomState.offset.height += dy
             zoomState.lastOffset = zoomState.offset
@@ -266,7 +278,7 @@ struct LoupeView: View {
     private func toggleActualSize(proxy: GeometryProxy) {
         guard let cgImage = currentImage else { return }
         loadFullQualityIfNeeded()
-        withAnimation(.spring()) {
+        withAnimation(reduceMotion ? nil : .spring()) {
             if zoomState.scale > 1.0 {
                 zoomState.reset()
             } else {
@@ -310,7 +322,7 @@ struct LoupeView: View {
     }
 
     private func applyFaceZoom(faces: [FaceData], cgImage: CGImage, proxy: GeometryProxy) {
-        withAnimation(.spring()) {
+        withAnimation(reduceMotion ? nil : .spring()) {
             // No faces detected → fall back to a centered punch-in so Z still does something.
             guard !faces.isEmpty else {
                 if faceZoomActive || zoomState.scale > 1.0 {
@@ -455,10 +467,17 @@ struct GridView: View {
         ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: workspace.gridScale, maximum: workspace.gridScale * 1.5))], spacing: 16) {
                 ForEach(workspace.photos, id: \.id) { photo in
-                    thumbnail(for: photo)
-                        .onTapGesture {
-                            handleSelection(for: photo)
+                    Button { handleSelection(for: photo) } label: {
+                        VStack(spacing: 6) {
+                            thumbnail(for: photo).accessibilityHidden(true)
+                            Text(photo.url.lastPathComponent).font(.callout)
+                                .foregroundStyle(.primary).lineLimit(2)
                         }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(photo.url.lastPathComponent)
+                    .accessibilityValue(photoReviewSummary(workspace.metadataCache[photo.id], selected: workspace.selection.contains(photo.id)))
+                    .help(photo.url.lastPathComponent)
                 }
             }
             .padding()
@@ -503,27 +522,36 @@ struct GridView: View {
 
 struct FilmstripView: View {
     @ObservedObject var workspace: WorkspaceViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal) {
                 LazyHStack(spacing: 8) {
                     ForEach(workspace.photos, id: \.id) { photo in
-                        ThumbnailView(
+                        Button { applyThumbnailSelection(photo: photo, workspace: workspace) } label: {
+                            VStack(spacing: 4) {
+                                ThumbnailView(
                             photo: photo,
                             metadata: workspace.metadataCache[photo.id],
                             isSelected: workspace.selection.contains(photo.id),
                             isFocused: workspace.currentPhoto?.id == photo.id,
                             selectionCount: workspace.selection.count,
-                            height: 100,
+                            height: 82,
                             imageProvider: workspace.imageProvider,
                             onOpenPreview: { workspace.openInPreview(photo) },
                             onRevealInFinder: { workspace.revealInFinder(photo) }
-                        )
-                        .id(photo.id)
-                        .onTapGesture {
-                            applyThumbnailSelection(photo: photo, workspace: workspace)
+                                ).accessibilityHidden(true)
+                                Text(photo.url.lastPathComponent).font(.caption)
+                                    .foregroundStyle(.primary).lineLimit(1).truncationMode(.middle)
+                                    .help(photo.url.lastPathComponent)
+                            }
+                            .frame(width: 144)
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(photo.url.lastPathComponent)
+                        .accessibilityValue(photoReviewSummary(workspace.metadataCache[photo.id], selected: workspace.selection.contains(photo.id)))
+                        .id(photo.id)
                     }
                 }
                 .padding(.horizontal)
@@ -531,9 +559,11 @@ struct FilmstripView: View {
             .scrollIndicators(.hidden)
             .onChange(of: workspace.currentPhotoIndex) { _, newValue in
                 guard let idx = newValue, idx >= 0, idx < workspace.photos.count else { return }
-                withAnimation {
+                if reduceMotion {
                     proxy.scrollTo(workspace.photos[idx].id, anchor: .center)
-                }
+                } else { withAnimation {
+                    proxy.scrollTo(workspace.photos[idx].id, anchor: .center)
+                } }
             }
         }
     }
@@ -563,9 +593,7 @@ func applyThumbnailSelection(photo: PhotoItem, workspace: WorkspaceViewModel) {
         workspace.selection = [photo.id]
     }
 
-    if let idx = workspace.photos.firstIndex(of: photo) {
-        workspace.currentPhotoIndex = idx
-    }
+    workspace.focusPhoto(photo.id)
 }
 
 struct ThumbnailView: View {
@@ -581,6 +609,12 @@ struct ThumbnailView: View {
 
     @State private var image: CGImage?
     @State private var imageLoadFinished: Bool = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var photoSource: PhotoRef {
+        PhotoRef(id: photo.id, url: photo.url, pairedURL: photo.pairedURL,
+                 prefersEmbeddedPreview: photo.isRAW && photo.pairedURL == nil)
+    }
 
     private var fileExtBadge: (label: String, color: Color) {
         let ext = photo.url.pathExtension.lowercased()
@@ -637,10 +671,6 @@ struct ThumbnailView: View {
                     .foregroundStyle(.white, .black.opacity(0.6))
                     .shadow(radius: 2)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-
-            if !isFocused && !isSelected {
-                Color.black.opacity(0.5)
             }
 
             let badge = fileExtBadge
@@ -734,22 +764,20 @@ struct ThumbnailView: View {
         .opacity(metadata?.flag == .reject ? 0.4 : 1.0)
         .shadow(
             color: isFocused ? Color.accentColor.opacity(0.75) : .clear,
-            radius: isFocused ? 11 : 0
+            radius: isFocused ? 4 : 0
         )
-        .scaleEffect(isFocused ? 1.1 : (isMultiSelected ? 1.03 : 1.0))
-        .animation(.easeInOut(duration: 0.15), value: isFocused)
-        .animation(.easeInOut(duration: 0.15), value: isSelected)
+        .scaleEffect(isFocused && !reduceMotion ? 1.02 : 1.0)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: isFocused)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: isSelected)
         .zIndex(isFocused ? 3 : (isSelected ? 2 : 0))
         .frame(height: height)
         .contextMenu {
             Button("Open in Preview", action: onOpenPreview)
             Button("Reveal in Finder", action: onRevealInFinder)
         }
-        .task(id: photo.id) {
+        .task(id: photoSource) {
             imageLoadFinished = false
-            let ref = PhotoRef(id: photo.id, url: photo.url, pairedURL: photo.pairedURL,
-                               prefersEmbeddedPreview: photo.isRAW && photo.pairedURL == nil)
-            image = await imageProvider.image(for: ref, tier: .thumbnail)
+            image = await imageProvider.image(for: photoSource, tier: .thumbnail)
             imageLoadFinished = true
         }
     }
